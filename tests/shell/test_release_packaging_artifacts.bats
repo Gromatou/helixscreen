@@ -85,6 +85,40 @@ release_recipe() {
 }
 
 # ============================================================================
+# moonraker-plugin included in release packages
+# ============================================================================
+
+@test "release-copy-xml-config stages moonraker-plugin without tests or pyc" {
+    # HelixPluginInstaller resolves <install>/moonraker-plugin/install.sh next
+    # to bin/helix-screen, so a release tree without the plugin dir breaks the
+    # in-UI install/uninstall on every device. Run the real macro against a
+    # temp stage dir rather than grepping its text: this proves the copy lands
+    # AND that nothing later in the macro (dev-panel rm, minify) eats it.
+    cd "$BATS_TEST_DIRNAME/../.." || fail "cannot reach repo root"
+
+    local stage="$BATS_TEST_TMPDIR/helixscreen" mkfile="$BATS_TEST_TMPDIR/stage.mk"
+    mkdir -p "$stage"
+    # DEV_PANEL_XML must come along: undefined, the macro's rm -f would target
+    # $(1)/ui_xml/ itself (a directory rm -f cannot delete, so make fails).
+    {
+        grep -E '^DEV_PANEL_XML :=' "$CROSS_MK" || fail "DEV_PANEL_XML missing from $CROSS_MK"
+        sed -n '/^define release-copy-xml-config/,/^endef/p' "$CROSS_MK"
+        printf '\n.PHONY: stage\nstage:\n\t$(call release-copy-xml-config,%s)\n' "$stage"
+    } > "$mkfile"
+
+    run make -f "$mkfile" stage
+    [ "$status" -eq 0 ] || fail "release-copy-xml-config failed: $output"
+
+    [ -f "$stage/moonraker-plugin/install.sh" ] \
+        || fail "release tree ships no moonraker-plugin/install.sh"
+    [ -f "$stage/moonraker-plugin/helix_print.py" ] \
+        || fail "release tree ships no moonraker-plugin/helix_print.py"
+    [ ! -e "$stage/moonraker-plugin/tests" ] || fail "plugin tests shipped in release tree"
+    [ -z "$(find "$stage/moonraker-plugin" -name __pycache__ -print -quit)" ] \
+        || fail "bytecode cache shipped in release tree"
+}
+
+# ============================================================================
 # LZ4 compression enabled
 # ============================================================================
 
@@ -98,4 +132,21 @@ release_recipe() {
 
 @test "3D splash generation uses LZ4 compression" {
     grep -q '"--compress".*"LZ4"' scripts/gen_splash_3d.py
+}
+
+# ============================================================================
+# CA bundle ships in every release package
+# ============================================================================
+
+@test "every release target packages a CA bundle and the macro fails without one" {
+    local body
+    body=$(awk '/^define release-ca-bundle/{f=1;next} /^endef/{f=0} f' "$CROSS_MK")
+    echo "$body" | grep -q 'certs/ca-certificates.crt' || fail "macro does not install the CA bundle"
+    echo "$body" | grep -q 'CA_BUNDLE' || fail "macro has no host-bundle fallback"
+    echo "$body" | grep -q 'exit 1' || fail "macro does not fail on a missing bundle"
+    local t missing=""
+    for t in $(release_targets); do
+        release_recipe "$t" | grep -q 'call release-ca-bundle' || missing="$missing $t"
+    done
+    [ -z "$missing" ] || fail "release targets without a CA bundle:$missing"
 }

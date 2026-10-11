@@ -120,6 +120,7 @@ translations:
   Abort already in progress: Abort already in progress
   Abort failed: Abort failed
   Aborting AFC operation...: Aborting AFC operation...
+  Aborting...: Aborting...
   About: About
   Accel to Decel: Accel to Decel
   Acceleration to deceleration limit (mm/s²): Acceleration to deceleration limit (mm/s²)
@@ -144,6 +145,7 @@ translations:
   Add Vendor: Add Vendor
   Add Widget: Add Widget
   Add custom filament: Add custom filament
+  Add page: Add page
   Added to Spoolman: Added to Spoolman
   Address: Address
   Adjust belt tension until the belt appears stationary: Adjust belt tension until
@@ -633,6 +635,9 @@ translations:
   Copied to clipboard!: Copied to clipboard!
   Copy Command: Copy Command
   Copy failed - use SSH manually: Copy failed - use SSH manually
+  Copying from USB: Copying from USB
+  Copying from USB stopped responding: Copying from USB stopped responding
+  Copying from USB...: Copying from USB...
   Corner roundness: Corner roundness
   Correction (Ki): Correction (Ki)
   Could not analyze PRINT_START macro. Some print options may be unavailable.: Could
@@ -640,6 +645,7 @@ translations:
   Could not answer the connection request: Could not answer the connection request
   ? "Could not check webcam status.\nCheck printer connection."
   : "Could not check webcam status.\nCheck printer connection."
+  'Could not copy {} from USB: {}': 'Could not copy {} from USB: {}'
   Could not forget device: Could not forget device
   Could not load printer database: Could not load printer database
   Could not parse tips database: Could not parse tips database
@@ -726,6 +732,7 @@ translations:
   Deploy: Deploy
   Describe the issue (optional): Describe the issue (optional)
   Detailed: Detailed
+  Detect automatically: Detect automatically
   'Detecting plate...': 'Detecting plate...'
   Detecting printer type...: Detecting printer type...
   Detecting...: Detecting...
@@ -1072,6 +1079,7 @@ translations:
   ? Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool.
   : Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool.
   'Filament load failed: {}': 'Filament load failed: {}'
+  Filament not set: Filament not set
   Filament operation failed: Filament operation failed
   Filament operation timed out: Filament operation timed out
   Filament ran out - nothing at the toolhead and the print is paused.: Filament ran out - nothing at the toolhead and the print is paused.
@@ -1080,6 +1088,8 @@ translations:
   Filament ran out at the toolhead: Filament ran out at the toolhead
   Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume.: Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume.
   Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume.: Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume.
+  Filament reload failed: Filament reload failed
+  Filament remapping is unavailable: Filament remapping is unavailable
   Filament runout: Filament runout
   Filament runout and motion detection sensors: Filament runout and motion detection
     sensors
@@ -1319,9 +1329,6 @@ translations:
   Install plugin: Install plugin
   Install script not found. Use the remote install command instead.: Install script
     not found. Use the remote install command instead.
-  Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history.: Install
-    the HelixPrint plugin in Advanced settings to remap filament without affecting
-    print history.
   'Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:': 'Install
     the HelixPrint plugin to enable fast G-code modifications. Run this command via
     SSH on your printer:'
@@ -1989,6 +1996,7 @@ translations:
   Print error: Print error
   Print failed: Print failed
   Print history statistics: Print history statistics
+  Print history will show the rewritten name: Print history will show the rewritten name
   Print issue detected: Print issue detected
   'Print preparation failed: {}': 'Print preparation failed: {}'
   Print progress and file selection: Print progress and file selection
@@ -2146,7 +2154,9 @@ translations:
   Recording Mode: Recording Mode
   Recover: Recover
   Recover MMU state?: Recover MMU state?
+  Recover State: Recover State
   Recovering AFC system...: Recovering AFC system...
+  Recovering...: Recovering...
   Recovery failed: Recovery failed
   'Recovery failed: ': 'Recovery failed: '
   'Recovery failed: {}': 'Recovery failed: {}'
@@ -2170,7 +2180,10 @@ translations:
   Remaining (g): Remaining (g)
   Remaining Weight (g): Remaining Weight (g)
   Remap Tool: Remap Tool
-  Remap needs the HelixPrint plugin: Remap needs the HelixPrint plugin
+  ? Remapping rewrites the job file before printing it. This printer's Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally.
+  : Remapping rewrites the job file before printing it. This printer's Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally.
+  ? "Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.\n\nInstalling the plugin takes a moment and needs no restart."
+  : "Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.\n\nInstalling the plugin takes a moment and needs no restart."
   Remap…: Remap…
   Remember slot spool details across an eject: Remember slot spool details across an eject
   Remove: Remove
@@ -2441,6 +2454,7 @@ translations:
   Set logging verbosity for troubleshooting: Set logging verbosity for troubleshooting
   Set up: Set up
   Set up your label printer in Settings: Set up your label printer in Settings
+  Set what is really selected and loaded. Nothing moves.: Set what is really selected and loaded. Nothing moves.
   Settings: Settings
   Settings Snapshot: Settings Snapshot
   Settings reset to defaults. Restarting...: Settings reset to defaults. Restarting...
@@ -2497,6 +2511,8 @@ translations:
   'Slot %d: %.0fg of %.0fg needed': 'Slot %d: %.0fg of %.0fg needed'
   Slot 1: Slot 1
   Slot {}: Slot {}
+  ? Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print.
+  : Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print.
   Slot {} is blocked — manual intervention required: Slot {} is blocked — manual intervention required
   Slot {} matches.: Slot {} matches.
   Slot {} spool cleared: Slot {} spool cleared
@@ -2769,6 +2785,12 @@ translations:
     print needs about %.0fg but the spool has about %.0fg remaining. Start anyway?
   ? This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets.
   : This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets.
+  ? This removes the plugin's Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that.
+  : This removes the plugin's Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that.
+  This replaces the printer's helper macros with the current version and restarts Klipper.: This replaces the printer's helper macros with the current version and restarts Klipper.
+  ? This replaces the printer's helper macros with the current version. A print is running, so Klipper restarts after it finishes.
+  : This replaces the printer's helper macros with the current version. A print is running, so Klipper restarts after it finishes.
+  This system does not support bypass mode: This system does not support bypass mode
   This tool probes each bed screw and tells you how much to adjust.: This tool probes
     each bed screw and tells you how much to adjust.
   ? This will apply the Z-offset to your endstop and restart Klipper to save the configuration.
@@ -2911,6 +2933,7 @@ translations:
   Unload macro not configured: Unload macro not configured
   Unload may still be running — response timed out: Unload may still be running —
     response timed out
+  Unloaded: Unloaded
   Unloading: Unloading
   Unloading Start Speed: Unloading Start Speed
   Unloading before bypass...: Unloading before bypass...
@@ -3176,6 +3199,7 @@ translations:
   '{} disabled': '{} disabled'
   '{} enabled': '{} enabled'
   '{} failed: {}': '{} failed: {}'
+  '{} filament': '{} filament'
   '{} filament sensors available': '{} filament sensors available'
   '{} filament • {}': '{} filament • {}'
   '{} heater turned off': '{} heater turned off'

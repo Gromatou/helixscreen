@@ -1885,6 +1885,7 @@ does not build through this Makefile at all: `android/app/jni/CMakeLists.txt` gl
 | `HELIX_HAS_ACE` | 1 | ACE vendor backend (0 on non-Anker cross targets) |
 | `HELIX_HAS_QIDI` | 1 | QIDI Box vendor backend (0 on non-QIDI cross targets) |
 | `HELIX_HAS_SNAPMAKER` | 1 | SnapSwap vendor backend (0 except `snapmaker-u1`) |
+| `HELIX_BACKLIGHT_FLOOR_PERCENT` | 0 | Lowest visible raw backlight level, percent of the raw range (20 on `k2`, whose panel renders lower PWM as off, #1709; `/display/backlight_floor_percent` in settings.json overrides per panel) |
 
 ### Linker flags by platform
 

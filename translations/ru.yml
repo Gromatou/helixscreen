@@ -124,6 +124,7 @@ translations:
   Abort already in progress: Прерывание уже выполняется
   Abort failed: Ошибка прерывания
   Aborting AFC operation...: Прерывание операции AFC...
+  Aborting...: Прерывание...
   About: О программе
   Accel to Decel: Ускорение к торможению
   Acceleration to deceleration limit (mm/s²): Предел ускорения к торможению (мм/с²)
@@ -148,6 +149,7 @@ translations:
   Add Vendor: Добавить производителя
   Add Widget: Добавить виджет
   Add custom filament: Добавить свой филамент
+  Add page: Добавить страницу
   Added to Spoolman: Добавлено в Spoolman
   Address: Адрес
   Adjust belt tension until the belt appears stationary: Регулируйте натяжение ремня,
@@ -647,6 +649,9 @@ translations:
   Copied to clipboard!: Скопировано в буфер обмена!
   Copy Command: Копировать команду
   Copy failed - use SSH manually: Ошибка копирования - используйте SSH вручную
+  Copying from USB: 'Копирование с USB'
+  Copying from USB stopped responding: 'Копирование с USB перестало отвечать'
+  Copying from USB...: 'Копирование с USB...'
   Corner roundness: Скругление углов
   Correction (Ki): Коррекция (Ki)
   Could not analyze PRINT_START macro. Some print options may be unavailable.: Не
@@ -655,6 +660,7 @@ translations:
   Could not answer the connection request: 'Не удалось ответить на запрос подключения'
   ? "Could not check webcam status.\nCheck printer connection."
   : "Не удалось проверить статус веб-камеры.\nПроверьте подключение принтера."
+  'Could not copy {} from USB: {}': 'Не удалось скопировать {} с USB: {}'
   Could not forget device: Не удалось забыть устройство
   Could not load printer database: Не удалось загрузить базу данных принтеров
   Could not parse tips database: Не удалось разобрать базу данных советов
@@ -742,6 +748,7 @@ translations:
   Deploy: Развернуть
   Describe the issue (optional): Опишите проблему (необязательно)
   Detailed: Подробно
+  Detect automatically: Определить автоматически
   Detecting plate...: Обнаружение пластины...
   Detecting printer type...: Определение типа принтера...
   Detecting...: Обнаружение...
@@ -1092,6 +1099,7 @@ translations:
   ? Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool.
   : После выгрузки филамент всё ещё находится у сопла. Отрезание или втягивание могло не завершиться. Очистите печатающую головку перед загрузкой другой катушки.
   'Filament load failed: {}': 'Ошибка загрузки филамента: {}'
+  Filament not set: 'Филамент не задан'
   Filament operation failed: Операция с филаментом не удалась
   Filament operation timed out: Операция с филаментом — время ожидания истекло
   Filament ran out - nothing at the toolhead and the print is paused.: 'Филамент закончился - у печатающей головки ничего нет, печать приостановлена.'
@@ -1100,6 +1108,8 @@ translations:
   Filament ran out at the toolhead: 'Филамент закончился у печатающей головки'
   Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume.: 'Филамент закончился. Автопополнение выключено, поэтому CFS не сменит катушку сам. Загрузите филамент и продолжите печать.'
   Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume.: Филамент закончился. CFS знает, какие катушки подходят, но эти слоты пусты. Загрузите одну из них, затем продолжите печать.
+  Filament reload failed: Не удалось повторно подать филамент
+  Filament remapping is unavailable: Переназначение филамента недоступно
   Filament runout: Окончание филамента
   Filament runout and motion detection sensors: Датчики окончания и движения филамента
   Filament runout detection status: 'Состояние датчика окончания филамента'
@@ -1339,9 +1349,6 @@ translations:
   Install plugin: Установить плагин
   Install script not found. Use the remote install command instead.: Скрипт установки
     не найден. Используйте вместо этого команду удалённой установки.
-  Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history.: Установите
-    плагин HelixPrint в расширенных настройках, чтобы переназначать филамент без влияния
-    на историю печати.
   'Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:': 'Установите
     плагин HelixPrint для быстрой модификации G-code. Выполните эту команду через
     SSH на вашем принтере:'
@@ -2015,6 +2022,7 @@ translations:
   Print error: Ошибка печати
   Print failed: Печать не удалась
   Print history statistics: 'Статистика истории печати'
+  Print history will show the rewritten name: История печати покажет изменённое имя
   Print issue detected: Обнаружена проблема печати
   'Print preparation failed: {}': 'Ошибка подготовки печати: {}'
   Print progress and file selection: 'Ход печати и выбор файла'
@@ -2174,7 +2182,9 @@ translations:
   Recording Mode: Режим записи
   Recover: Восстановить
   Recover MMU state?: Восстановить состояние MMU?
+  Recover State: Восстановить состояние
   Recovering AFC system...: Восстановление системы AFC...
+  Recovering...: Восстановление...
   Recovery failed: Восстановление не удалось
   'Recovery failed: ': 'Восстановление не удалось: '
   'Recovery failed: {}': 'Восстановление не удалось: {}'
@@ -2198,7 +2208,10 @@ translations:
   Remaining (g): Осталось (г)
   Remaining Weight (g): Оставшийся вес (г)
   Remap Tool: Переназначить инструмент
-  Remap needs the HelixPrint plugin: Для переназначения нужен плагин HelixPrint
+  ? Remapping rewrites the job file before printing it. This printer's Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally.
+  : Переназначение переписывает файл задания перед печатью. Moonraker этого принтера слишком старый, чтобы плагин HelixPrint потом восстановил исходное имя файла, поэтому выполненное задание отображается под изменённым именем. Само переназначение работает нормально.
+  ? "Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.\n\nInstalling the plugin takes a moment and needs no restart."
+  : "Переназначение переписывает файл задания перед печатью. Без плагина HelixPrint в историю печати попадает изменённая копия, поэтому выполненные задания отображаются под именами вроде modified_1730824_benchy.gcode вместо выбранного файла.\n\nУстановка плагина занимает немного времени и не требует перезапуска."
   Remap…: Переназначить…
   Remember slot spool details across an eject: Запоминать данные катушки слота после извлечения
   Remove: Удалить
@@ -2471,6 +2484,7 @@ translations:
     для устранения неполадок
   Set up: Настроить
   Set up your label printer in Settings: Настройте принтер этикеток в Настройках
+  Set what is really selected and loaded. Nothing moves.: Укажите, что на самом деле выбрано и загружено. Ничего не двигается.
   Settings: Настройки
   Settings Snapshot: Снимок настроек
   Settings reset to defaults. Restarting...: Настройки сброшены к значениям по умолчанию.
@@ -2530,6 +2544,8 @@ translations:
   'Slot %d: %.0fg of %.0fg needed': 'Слот %d: %.0fг из %.0fг'
   Slot 1: Слот 1
   Slot {}: Слот {}
+  ? Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print.
+  : 'Для слота {} не задан тип филамента, поэтому принтер не продолжит печать. Задайте его материал на панели филамента, затем продолжите печать.'
   Slot {} is blocked — manual intervention required: Слот {} заблокирован — требуется ручное вмешательство
   Slot {} matches.: 'Слот {} подходит.'
   Slot {} spool cleared: Катушка слота {} удалена
@@ -2806,6 +2822,12 @@ translations:
     этой печати нужно около %.0fг, но на катушке осталось около %.0fг. Всё равно начать?
   ? This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets.
   : Этот принтер похож на {} (уверенность {}%), но настроен как {}. Неверный тип применяет неправильные параметры перед печатью и пресеты.
+  ? This removes the plugin's Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that.
+  : Это удаляет компонент Moonraker плагина и перезапускает Moonraker. Принтер ненадолго отключится. Если в PRINT_START всё ещё остались старые строки отслеживания фаз, они также удаляются, при этом резервные копии сохраняются. Перезапуск Klipper применяет эти изменения.
+  This replaces the printer's helper macros with the current version and restarts Klipper.: 'Это заменит вспомогательные макросы принтера текущей версией и перезапустит Klipper.'
+  ? This replaces the printer's helper macros with the current version. A print is running, so Klipper restarts after it finishes.
+  : 'Это заменит вспомогательные макросы принтера текущей версией. Идёт печать, поэтому Klipper перезапустится после её завершения.'
+  This system does not support bypass mode: 'Эта система не поддерживает режим обхода'
   This tool probes each bed screw and tells you how much to adjust.: Этот инструмент
     проверяет каждый винт стола и показывает, насколько его нужно отрегулировать.
   ? This will apply the Z-offset to your endstop and restart Klipper to save the configuration.
@@ -2946,6 +2968,7 @@ translations:
   Unload macro not configured: Макрос выгрузки не настроен
   Unload may still be running — response timed out: Выгрузка может ещё выполняться
     — время ожидания истекло
+  Unloaded: Выгружен
   Unloading: Выгрузка
   Unloading Start Speed: 'Начальная скорость выгрузки'
   Unloading before bypass...: Выгрузка перед байпасом...
@@ -3209,6 +3232,7 @@ translations:
   '{} disabled': '{} выключено'
   '{} enabled': '{} включено'
   '{} failed: {}': 'Ошибка {}: {}'
+  '{} filament': '{} филамента'
   '{} filament sensors available': 'Доступно датчиков филамента: {}'
   '{} filament • {}': '{} филамента • {}'
   '{} heater turned off': Нагреватель {} выключен

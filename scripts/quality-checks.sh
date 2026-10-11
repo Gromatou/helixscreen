@@ -1400,21 +1400,32 @@ echo ""
 }
 
 # ====================================================================
-# Code Style Check
+# Work markers: every one is a fix, an issue, or a justified annotation
 # ====================================================================
-qc_code_style() {
+qc_todo_markers() {
   local EXIT_CODE=0
-echo "🔍 Checking for TODO/FIXME markers..."
+echo -n "🔍 Checking work markers in comments..."
 
-# Check for TODO/FIXME/XXX comments (informational only)
-if [ -n "$FILES" ]; then
-  if echo "$FILES" | xargs grep -n "TODO\|FIXME\|XXX" 2>/dev/null | head -20; then
-    echo "ℹ️  Found TODO/FIXME markers (informational only)"
+if [ -f "scripts/check_todo_markers.py" ]; then
+  # Ratcheting baseline. Printed as informational output (and truncated at 20
+  # lines) the list was never read whole, and several entries were user-facing
+  # controls that did nothing (prestonbrown/helixscreen#1373). On release/1.0
+  # the baseline is the markers the branch already carries; none is new work.
+  # The number may go DOWN (fix one, then lower this baseline) but must never
+  # go up. Always whole-tree: a marker is a marker whichever commit adds it.
+  if python3 scripts/check_todo_markers.py --max-allowed 30 --summary >/tmp/todo_markers.out 2>&1; then
+    echo ""
+    tail -1 /tmp/todo_markers.out
   else
-    echo "✅ No TODO/FIXME markers found"
+    echo ""
+    cat /tmp/todo_markers.out
+    echo "   Run: python3 scripts/check_todo_markers.py --list"
+    echo "   Fix it, or file the issue and cite it: // MARKER(#NNNN): <the constraint>"
+    EXIT_CODE=1
   fi
 else
-  echo "ℹ️  No source files to check"
+  echo ""
+  echo "⚠️  check_todo_markers.py not found — skipping"
 fi
 
 echo ""
@@ -1618,11 +1629,11 @@ echo ""
 # A mid-body [[ ]] is not a failure on bash 3.2, which is what macOS ships and
 # what build.yml and nightly.yml run: only the LAST statement of a @test body
 # decides the result, so every assertion above it passes whatever it evaluates
-# to. This branch carries 270 such sites out of 848 examined, so a third of the
+# to. This branch carries 259 such sites out of 824 examined, so a third of the
 # shell suite's assertions cannot fail their test on that platform.
 #
 # A ratchet, not a wall. The debt predates the gate and gating at zero would
-# mean converting 270 sites before anything else could land. The number must
+# mean converting 259 sites before anything else could land. The number must
 # never go up; lower it when a file moves to the contains/lacks helpers in
 # tests/shell/helpers.bash.
 qc_bats_inert() {
@@ -1631,7 +1642,7 @@ SECTION_START=$(date +%s)
 echo -n "ð«¥ Checking bats assertions bash 3.2 swallows..."
 
 if [ -f "scripts/check_bats_inert_assertions.py" ]; then
-  if python3 scripts/check_bats_inert_assertions.py --max-allowed 270 >/tmp/bats_inert.out 2>&1; then
+  if python3 scripts/check_bats_inert_assertions.py --max-allowed 259 >/tmp/bats_inert.out 2>&1; then
     section_time $SECTION_START
     echo ""
     cat /tmp/bats_inert.out
@@ -1975,6 +1986,33 @@ else
 fi
 
 SECTION_START=$(date +%s)
+echo -n "🔤 Checking JSON save paths for bare dumps..."
+
+if [ -f "scripts/check_json_dump_utf8.py" ]; then
+  # nlohmann dumps with error_handler_t::strict, so a string holding bytes UTF-8
+  # cannot decode throws json::type_error.316. The text on a save path is the
+  # text nothing validates — SSIDs, printer and tool names, file names, macro
+  # text, gcode responses — so strict costs the whole document: the throw either
+  # unwinds through LVGL's C frames or, behind a catch, drops the user's change
+  # silently. Use helix::json_util::safe_dump(), which replaces the offending
+  # bytes; annotate a genuine need `// JSON_DUMP_OK: <reason>`.
+  if python3 scripts/check_json_dump_utf8.py >/tmp/json_dump_utf8.out 2>&1; then
+    section_time $SECTION_START
+    echo ""
+    tail -1 /tmp/json_dump_utf8.out
+  else
+    section_time $SECTION_START
+    echo ""
+    cat /tmp/json_dump_utf8.out
+    EXIT_CODE=1
+  fi
+else
+  section_time $SECTION_START
+  echo ""
+  echo "⚠️  check_json_dump_utf8.py not found — skipping"
+fi
+
+SECTION_START=$(date +%s)
 echo -n "🧭 Checking raw print-state reads..."
 
 if [ -f "scripts/check_raw_print_job_state.py" ]; then
@@ -2084,7 +2122,7 @@ fi
 
 echo ""
 
-SECTION_START=$(start_section)
+SECTION_START=$(date +%s)
 echo -n "🔄 Checking touch-range rotation source..."
 
 # The gate lives in create_input_pointer(), which needs a real fbdev/DRM device
@@ -2111,7 +2149,35 @@ fi
 
 echo ""
 
-SECTION_START=$(start_section)
+SECTION_START=$(date +%s)
+echo -n "🔄 Checking display rotation cache order..."
+
+# The resolution cache must be read after set_display_rotation() settles: a
+# plane owning 90/270 un-swaps the resolution, and a cache read before the
+# call records a value the display no longer has (#1587). apply_rotation's
+# body is #ifdef'd out of the test binary (HELIX_DISPLAY_SDL), so a lint is
+# the only thing that makes a wrong-order revert fail.
+if [ -f "scripts/check_rotation_cache_order.py" ]; then
+  if python3 scripts/check_rotation_cache_order.py >/tmp/rotation_cache.out 2>&1; then
+    section_time $SECTION_START
+    echo ""
+    echo "✅ display resolution is cached only after rotation settles"
+  else
+    section_time $SECTION_START
+    echo ""
+    cat /tmp/rotation_cache.out
+    echo "   Run: python3 scripts/check_rotation_cache_order.py"
+    EXIT_CODE=1
+  fi
+else
+  section_time $SECTION_START
+  echo ""
+  echo "⚠️  check_rotation_cache_order.py not found — skipping"
+fi
+
+echo ""
+
+SECTION_START=$(date +%s)
 echo -n "🕰️  Checking comments for commit-SHA citations..."
 
 # Ratchet. Comments explain the code as it is; how it got here belongs in the
@@ -2663,6 +2729,43 @@ echo ""
 }
 
 # ====================================================================
+# CJK font bake: every manifest codepoint is in every runtime .bin
+# ====================================================================
+qc_cjk_fonts() {
+  local EXIT_CODE=0
+# A translated string whose glyph never got baked renders as tofu in zh/ja
+# with no build error and no runtime warning. check_cjk_font_coverage.py parses
+# the .bin cmap tables themselves so a stale bake cannot hide behind a freshly
+# written manifest. Its inputs are git-tracked files, so this runs in every
+# clone — no .otf source fonts required.
+SECTION_START=$(date +%s)
+echo -n "🌐 Checking CJK font bake..."
+
+if [ -f "scripts/check_cjk_font_coverage.py" ]; then
+  if python3 scripts/check_cjk_font_coverage.py >/tmp/cjk_cov.out 2>&1; then
+    section_time $SECTION_START
+    echo ""
+    echo "✅ Every manifest CJK codepoint is baked into the runtime fonts"
+  else
+    section_time $SECTION_START
+    echo ""
+    cat /tmp/cjk_cov.out
+    echo "   Fix: make regen-text-fonts, rebuild, commit assets/fonts/cjk/."
+    EXIT_CODE=1
+  fi
+else
+  section_time $SECTION_START
+  echo ""
+  echo "⚠️  check_cjk_font_coverage.py not found — skipping"
+fi
+
+echo ""
+
+# ====================================================================
+  return $EXIT_CODE
+}
+
+# ====================================================================
 # Shell Script Linting (shellcheck)
 # ====================================================================
 qc_shellcheck() {
@@ -2975,7 +3078,7 @@ echo ""
   return $EXIT_CODE
 }
 
-QC_ALL="qc_phase1 qc_xml_const qc_xml_attr qc_dup_names qc_xml_linter qc_xml_subtests qc_hidden_tests qc_overlay_width qc_icon_names qc_design_pixels qc_phase2 qc_icon_font qc_mdi_codepoints qc_code_style qc_mem_safety qc_null_safety qc_l081 qc_net_pii qc_decl_ui qc_namespace qc_spdlog_only qc_design_tokens qc_test_mirrors qc_test_tautology qc_test_widget_registry qc_doc_refs qc_lvgl_event_codes qc_translation_fmt qc_base_locale qc_translation_coverage qc_shellcheck qc_installer_reachability qc_patch_drift qc_workflow_submodules qc_bats_inert"
+QC_ALL="qc_phase1 qc_xml_const qc_xml_attr qc_dup_names qc_xml_linter qc_xml_subtests qc_hidden_tests qc_overlay_width qc_icon_names qc_design_pixels qc_phase2 qc_icon_font qc_mdi_codepoints qc_todo_markers qc_mem_safety qc_null_safety qc_l081 qc_net_pii qc_decl_ui qc_namespace qc_spdlog_only qc_design_tokens qc_test_mirrors qc_test_tautology qc_test_widget_registry qc_doc_refs qc_lvgl_event_codes qc_translation_fmt qc_base_locale qc_translation_coverage qc_cjk_fonts qc_shellcheck qc_installer_reachability qc_patch_drift qc_workflow_submodules qc_bats_inert"
 
 QC_PARALLEL=""
 for fn in $QC_ALL; do
@@ -3016,6 +3119,9 @@ qc_trigger_re() {
     # wakes on both trees rather than only on the catalogs they land in.
     qc_translation_coverage)
                         echo '^ui_xml/|^src/|^translations/|^scripts/translation_sync\.py$|^scripts/translations/' ;;
+    qc_todo_markers)    echo '\.(cpp|c|h|hpp|mm|sh)$|check_todo_markers\.py$' ;;
+    # The artifacts live under assets/fonts/cjk/.
+    qc_cjk_fonts)       echo '^assets/fonts/cjk/|^scripts/check_cjk_font_coverage\.py$' ;;
     qc_shellcheck)      echo '\.(sh|bats)$' ;;
     # The gate reads every .bats file, so any of them can change the count;
     # helpers.bash because contains/lacks are the fix it points at, and the

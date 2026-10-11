@@ -1041,6 +1041,11 @@ class PrinterState {
         return print_domain_.get_print_exception_code();
     }
 
+    /// print_stats.exception code as a subject, -1 when none is latched.
+    lv_subject_t* get_print_exception_subject() {
+        return print_domain_.get_print_exception_subject();
+    }
+
     /// print_stats.exception message — pause reason text (empty when no exception).
     [[nodiscard]] const std::string& get_print_exception_message() const {
         return print_domain_.get_print_exception_message();
@@ -1625,9 +1630,21 @@ class PrinterState {
         return versions_state_.get_klipper_version_subject();
     }
 
+    /// Raw klipper version as the host reported it, for data consumers
+    /// (debug bundle); the subject carries the localized display form.
+    const std::string& get_klipper_version_raw() const {
+        return versions_state_.get_klipper_version_raw();
+    }
+
     /**
      * @brief Get Moonraker version subject for XML binding
      */
+    /// 1 when this Moonraker is too old for the HelixPrint plugin to restore a
+    /// rewritten job's original filename. See moonraker_history_is_degraded().
+    lv_subject_t* get_moonraker_history_degraded_subject() {
+        return versions_state_.get_moonraker_history_degraded_subject();
+    }
+
     lv_subject_t* get_moonraker_version_subject() {
         return versions_state_.get_moonraker_version_subject();
     }
@@ -1838,6 +1855,11 @@ class PrinterState {
      * @return True if the HelixPrint Moonraker plugin is installed
      */
     bool service_has_helix_plugin() const;
+
+    /// Tri-state plugin presence as published: -1 not probed, 0 absent,
+    /// 1 present. Callers that must tell "not probed yet" apart from "absent"
+    /// want this; service_has_helix_plugin() collapses both to false.
+    int helix_plugin_state() const;
 
     /**
      * @brief Set phase tracking enabled/disabled status

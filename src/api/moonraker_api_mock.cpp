@@ -7,6 +7,7 @@
 
 #include "../tests/mocks/mock_printer_state.h"
 #include "gcode_parser.h"
+#include "mock_planted_gcodes.h"
 #include "moonraker_client_mock_internal.h"
 #include "power_device_state.h"
 #include "runtime_config.h"
@@ -26,6 +27,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <random>
 #include <set>
 #include <sstream>
@@ -418,6 +420,11 @@ void MoonrakerAPIMock::set_phase_tracking_enabled(bool enabled,
 std::string MoonrakerFileTransferAPIMock::find_test_file(const std::string& filename) const {
     namespace fs = std::filesystem;
 
+    const std::string& planted = helix::mock::planted_gcode_dir();
+    if (!planted.empty() && fs::exists(planted + "/" + filename)) {
+        return planted + "/" + filename;
+    }
+
     for (const auto& prefix : PATH_PREFIXES) {
         std::string path = prefix + std::string(TEST_GCODE_DIR) + "/" + filename;
 
@@ -717,6 +724,46 @@ void MoonrakerFileTransferAPIMock::upload_file_with_name(
         root, path, filename, content.size());
 
     // Mock always succeeds
+    if (on_success) {
+        on_success();
+    }
+}
+
+void MoonrakerFileTransferAPIMock::upload_file_from_path(
+    const std::string& root, const std::string& dest_path, const std::string& local_path,
+    SuccessCallback on_success, ErrorCallback on_error, ProgressCallback on_progress) {
+    (void)on_progress; // Progress callback ignored in mock
+
+    PathUploadRecord record;
+    record.root = root;
+    record.dest_path = dest_path;
+    record.local_path = local_path;
+    {
+        std::ifstream src(local_path, std::ios::binary);
+        if (src) {
+            record.content.assign(std::istreambuf_iterator<char>(src),
+                                  std::istreambuf_iterator<char>());
+        }
+    }
+    path_uploads_.push_back(record);
+
+    spdlog::info("[MoonrakerAPIMock] Mock upload_file_from_path: root='{}', dest='{}', "
+                 "local='{}', size={} bytes",
+                 root, dest_path, local_path, record.content.size());
+
+    if (hold_path_uploads_) {
+        held_path_uploads_.push_back(std::move(on_success));
+        return;
+    }
+
+    if (fail_path_uploads_) {
+        if (on_error) {
+            on_error(MoonrakerError::unknown("Mock upload rejected: " + dest_path,
+                                             "upload_file_from_path"));
+        }
+        return;
+    }
+
     if (on_success) {
         on_success();
     }

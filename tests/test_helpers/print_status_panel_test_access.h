@@ -54,6 +54,20 @@ class PrintStatusPanelTestAccess {
         return panel.gcode_viewer_;
     }
 
+    /// Start the G-code preview load the deferred timer would start.
+    static void load_gcode_for_viewing(PrintStatusPanel& panel, const std::string& filename) {
+        panel.load_gcode_for_viewing(filename);
+    }
+
+    /// 0 = thumbnail, 1 = 3D viewer, 2 = 2D viewer.
+    static lv_subject_t* viewer_mode(PrintStatusPanel& panel) {
+        return &panel.gcode_viewer_mode_subject_;
+    }
+
+    static IMoonrakerAPI* api(const PrintStatusPanel& panel) {
+        return panel.api_;
+    }
+
     static void recompute_aux_composites(PrintStatusPanel& panel, int density, bool aux_present) {
         panel.recompute_aux_composites_for_measurement(density, aux_present);
     }
@@ -79,6 +93,9 @@ class PrintStatusPanelTestAccess {
         return panel.printer_state_.get_print_identity_override();
     }
 
+    static std::string reprint_filename(const PrintStatusPanel& panel) {
+        return panel.reprint_filename();
+    }
     static const std::string& current_print_filename(const PrintStatusPanel& panel) {
         return panel.current_print_filename_;
     }

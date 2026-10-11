@@ -12,6 +12,7 @@
 #include "http_executor.h"
 #include "hv/requests.h"
 #include "i_moonraker_api.h"
+#include "json_utils.h"
 #include "log_redact.h"
 #include "logging_init.h"
 #include "platform_capabilities.h"
@@ -22,6 +23,7 @@
 #include "system/log_collector.h"
 #include "system/moonraker_local_probe.h"
 #include "system/telemetry_manager.h"
+#include "system/tls_trust.h"
 #include "system/update_checker.h"
 #include "touch_calibration_wrapper.h"
 #ifdef __ANDROID__
@@ -319,6 +321,7 @@ json DebugBundleCollector::build_touch_info(const TouchRangeDiagnostics& diag) {
         stored["max_x"] = pipe.stored.max_x;
         stored["min_y"] = pipe.stored.min_y;
         stored["max_y"] = pipe.stored.max_y;
+        stored["capture_rotation"] = pipe.stored.capture_rotation;
     }
     touch["stored_range"] = stored;
     touch["affine_valid"] = diag.affine_valid;
@@ -476,10 +479,12 @@ PrinterSnapshot DebugBundleCollector::snapshot_printer_state() {
         // that set_printer_type() reassigns without a mutex.
         snap.model = ps.get_printer_type();
 
-        if (auto* kv_subj = ps.get_klipper_version_subject()) {
-            const char* kv = lv_subject_get_string(kv_subj);
-            if (kv && kv[0] != '\0')
-                snap.klipper_version = kv;
+        // The raw string, not the display subject: the subject localizes
+        // placeholder versions ("?"/"unknown" from some vendor forks) into a
+        // translated label, which tells a bundle reader nothing about what
+        // the host actually reported.
+        if (!ps.get_klipper_version_raw().empty()) {
+            snap.klipper_version = ps.get_klipper_version_raw();
         }
         if (auto* conn_subj = ps.get_printer_connection_state_subject())
             snap.connection_state = lv_subject_get_int(conn_subj);
@@ -2156,7 +2161,7 @@ void DebugBundleCollector::upload_async(const BundleOptions& options, ResultCall
         try {
             spdlog::info("[DebugBundle] Collecting debug bundle...");
             json bundle = collect(opts);
-            std::string json_str = bundle.dump();
+            std::string json_str = helix::json_util::safe_dump(bundle);
 
             spdlog::info("[DebugBundle] Compressing {} bytes...", json_str.size());
             auto compressed = gzip_compress(json_str);
@@ -2196,7 +2201,7 @@ void DebugBundleCollector::upload_async(const BundleOptions& options, ResultCall
             req->headers["X-API-Key"] = INGEST_API_KEY;
             req->body.assign(reinterpret_cast<const char*>(compressed.data()), compressed.size());
 
-            auto resp = requests::request(req);
+            auto resp = helix::tls::trusted_request(req);
             status = resp ? static_cast<int>(resp->status_code) : 0;
             response_body = resp ? resp->body : "";
 #endif

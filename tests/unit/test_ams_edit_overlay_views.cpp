@@ -11,6 +11,7 @@
 #include "ui_update_queue.h"
 
 #include "../lvgl_ui_test_fixture.h"
+#include "../test_helpers/scoped_breakpoint.h"
 #include "ams_backend_mock.h"
 #include "ams_error.h"
 #include "ams_state.h"
@@ -1203,6 +1204,116 @@ TEST_CASE_METHOD(LVGLUITestFixture, "picker pre-selects the first row for unlink
     close_editor_overlay();
 }
 
+TEST_CASE_METHOD(LVGLUITestFixture, "picker row names a spool by its filament name",
+                 "[ams_edit_overlay][picker][spool_label]") {
+    // Two spools of one vendor and material differ only by Spoolman's filament
+    // name, so the row's primary label (the only text a compact row shows)
+    // has to carry it.
+    auto& overlay = get_ams_edit_overlay();
+    AmsEditOverlayViewTestAccess access(overlay);
+
+    REQUIRE(overlay.show_for_slot(test_screen(), 0, untracked_slot(), nullptr, nullptr,
+                                  /*open_on_picker=*/true));
+    UpdateQueue::instance().drain();
+    process_lvgl(10);
+
+    SpoolInfo clear;
+    clear.id = 12;
+    clear.vendor = "Kingroon";
+    clear.material = "PETG";
+    clear.filament_name = "Kingroon Basic PETG Clear";
+    clear.remaining_weight_g = 750;
+    SpoolInfo white = clear;
+    white.id = 13;
+    white.filament_name = "Kingroon Basic PETG White";
+    SpoolInfo unnamed;
+    unnamed.id = 14;
+    unnamed.vendor = "Polymaker";
+    unnamed.material = "PLA";
+    access.set_cached_spools({clear, white, unnamed});
+
+    // Medium renders compact single-line rows, Large the two-line rich rows.
+    const UiBreakpoint bp = GENERATE(UiBreakpoint::Medium, UiBreakpoint::Large);
+    CAPTURE(to_int(bp));
+    helix::test::ScopedBreakpoint scoped_bp(bp);
+    access.call_render_spool_list("");
+    UpdateQueue::instance().drain();
+    process_lvgl(10);
+
+    lv_obj_t* list = access.widget("picker_spool_list");
+    REQUIRE(list != nullptr);
+    REQUIRE(lv_obj_get_child_count(list) == 3);
+
+    const auto row_for = [list](int spool_id) -> lv_obj_t* {
+        for (uint32_t i = 0; i < lv_obj_get_child_count(list); ++i) {
+            lv_obj_t* row = lv_obj_get_child(list, static_cast<int32_t>(i));
+            if (reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)) == spool_id) {
+                return row;
+            }
+        }
+        return nullptr;
+    };
+    const auto name_of = [&row_for](int spool_id) -> std::string {
+        lv_obj_t* row = row_for(spool_id);
+        REQUIRE(row != nullptr);
+        lv_obj_t* label = lv_obj_find_by_name(row, "spool_name");
+        REQUIRE(label != nullptr);
+        return lv_label_get_text(label);
+    };
+
+    // The vendor and material the filament name already contains are not repeated.
+    CHECK(name_of(12) == "#12 Kingroon Basic PETG Clear");
+    CHECK(name_of(13) == "#13 Kingroon Basic PETG White");
+    CHECK(name_of(14) == "#14 Polymaker PLA");
+
+    // The row prints the filament name once, whatever the layout.
+    const auto visible_text = [](lv_obj_t* root) {
+        std::string text;
+        std::vector<lv_obj_t*> stack{root};
+        while (!stack.empty()) {
+            lv_obj_t* obj = stack.back();
+            stack.pop_back();
+            if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+                continue;
+            }
+            if (lv_obj_check_type(obj, &lv_label_class)) {
+                text += lv_label_get_text(obj);
+                text += '\n';
+            }
+            for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) {
+                stack.push_back(lv_obj_get_child(obj, static_cast<int32_t>(i)));
+            }
+        }
+        return text;
+    };
+    const auto occurrences = [](const std::string& haystack, const std::string& needle) {
+        size_t count = 0;
+        for (size_t pos = haystack.find(needle); pos != std::string::npos;
+             pos = haystack.find(needle, pos + needle.size())) {
+            ++count;
+        }
+        return count;
+    };
+    CHECK(occurrences(visible_text(row_for(12)), "Basic PETG Clear") == 1);
+    CHECK(occurrences(visible_text(row_for(13)), "Basic PETG White") == 1);
+
+    // A label that holds the name but lays out zero-sized shows nothing.
+    lv_obj_update_layout(list);
+    lv_obj_t* label = lv_obj_find_by_name(row_for(12), "spool_name");
+    CHECK(lv_obj_get_height(label) > 0);
+    CHECK(lv_obj_get_width(label) > 0);
+    // The name leaves room for the weight beside or below it, inside the
+    // details box that holds them both.
+    lv_obj_t* weight = lv_obj_find_by_name(row_for(12), "spool_weight");
+    lv_area_t details_area;
+    lv_area_t weight_area;
+    lv_obj_get_coords(lv_obj_get_parent(lv_obj_get_parent(weight)), &details_area);
+    lv_obj_get_coords(weight, &weight_area);
+    CHECK(weight_area.x2 <= details_area.x2);
+
+    close_editor_overlay();
+}
+
 TEST_CASE_METHOD(LVGLUITestFixture, "picker search burst renders once, after the pause",
                  "[ams_edit_overlay][picker][search]") {
     // Regression: every value_changed used to rebuild the whole spool list
@@ -2215,9 +2326,9 @@ TEST_CASE("build_spool_patches splits spool-level vs filament-level fields",
     CHECK(spool_patch["lot_nr"] == "LOT-B");
     CHECK(spool_patch["location"] == "Shelf B");
     CHECK(spool_patch["comment"] == "dried 4h");
-    CHECK(spool_patch.count("spool_weight") == 0);
+    CHECK(spool_patch["spool_weight"] == Catch::Approx(200.0));
 
-    CHECK(filament_patch["spool_weight"] == Catch::Approx(200.0));
+    CHECK(filament_patch.count("spool_weight") == 0);
     CHECK(filament_patch["color_hex"] == "#00FF00");
     CHECK(filament_patch.count("remaining_weight") == 0);
 

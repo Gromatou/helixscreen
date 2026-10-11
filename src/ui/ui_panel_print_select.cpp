@@ -12,6 +12,7 @@
 
 #include "ui_panel_print_select.h"
 
+#include "ui_busy_overlay.h"
 #include "ui_callback_helpers.h"
 #include "ui_error_reporting.h"
 #include "ui_event_safety.h"
@@ -72,6 +73,7 @@ using namespace helix;
 using helix::gcode::strip_gcode_extension;
 using helix::ui::format_filament_weight;
 using helix::ui::format_layer_count;
+using helix::ui::format_layer_height;
 using helix::ui::format_print_height;
 using helix::ui::format_print_time;
 
@@ -176,6 +178,11 @@ static void on_toggle_sliced_colors(lv_event_t* e) {
     auto* sw = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
     bool checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
     get_global_print_select_panel().forward_sliced_colors_toggle(checked);
+}
+
+static void on_color_card_remap_help(lv_event_t* e) {
+    (void)e;
+    get_global_print_select_panel().show_remap_help();
 }
 
 static void on_print_select_detail_backdrop(lv_event_t* e) {
@@ -358,6 +365,7 @@ void PrintSelectPanel::init_subjects() {
         {"on_print_select_detail_backdrop", on_print_select_detail_backdrop},
         {"on_print_detail_back_clicked", on_print_detail_back_clicked},
         {"on_toggle_sliced_colors", on_toggle_sliced_colors},
+        {"on_color_card_remap_help", on_color_card_remap_help},
     });
 
     subjects_initialized_ = true;
@@ -528,6 +536,7 @@ void PrintSelectPanel::setup(lv_obj_t* panel, lv_obj_t* parent_screen) {
 
             // Move data into panel (now safe - on main thread)
             panel->file_list_ = std::move(c->files);
+            panel->last_listing_applied_at_ = std::chrono::steady_clock::now();
 
             // Merge old metadata into new file list
             const bool retry_missing = panel->retry_missing_thumbnails_on_refresh_;
@@ -662,8 +671,26 @@ void PrintSelectPanel::setup(lv_obj_t* panel, lv_obj_t* parent_screen) {
                 // The current directory no longer exists on the server (e.g. a
                 // FlashForge path-doubling artifact). Retrying it would wedge the
                 // panel, so fall back to root instead of looping (TJVQDCZ6).
-                spdlog::warn("[{}] Current directory missing ('{}'); falling back to root",
-                             self->get_name(), error);
+                // Naming whether the failed entry came from the rendered listing
+                // separates a server-side phantom (fresh listing offered it) from
+                // navigation into a stale index (listing is old or lacks it).
+                const std::string& failed_path = self->current_path_;
+                const size_t slash = failed_path.find_last_of('/');
+                const std::string leaf =
+                    slash == std::string::npos ? failed_path : failed_path.substr(slash + 1);
+                const bool offered_by_listing = std::any_of(
+                    self->file_list_.begin(), self->file_list_.end(),
+                    [&leaf](const PrintFileData& f) { return f.is_dir && f.filename == leaf; });
+                std::string listing_age = "no listing yet";
+                if (self->last_listing_applied_at_.time_since_epoch().count() != 0) {
+                    const auto age_s = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now() - self->last_listing_applied_at_);
+                    listing_age = fmt::format("listing {}s old", age_s.count());
+                }
+                spdlog::warn("[{}] Current directory missing ('{}'); falling back to root "
+                             "(entry '{}' {} by prior listing, {})",
+                             self->get_name(), error, leaf,
+                             offered_by_listing ? "offered" : "not offered", listing_age);
                 self->path_navigator_.reset();
                 self->current_path_.clear();
                 self->refresh_files(/*force=*/true);
@@ -1182,17 +1209,8 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
     std::string print_time_str = format_print_time(total_minutes);
     std::string filament_str = format_filament_weight(filament_grams);
     std::string layer_count_str = format_layer_count(layer_count);
-    std::string print_height_str = format_print_height(object_height) + " " + lv_tr("tall");
-
-    // Format layer height (e.g., "0.24 mm")
-    char layer_height_buf[32];
-    if (layer_height > 0.0) {
-        helix::format::format_distance_mm(layer_height, 2, layer_height_buf,
-                                          sizeof(layer_height_buf));
-    } else {
-        snprintf(layer_height_buf, sizeof(layer_height_buf), "-");
-    }
-    std::string layer_height_str = layer_height_buf;
+    std::string print_height_str = format_print_height(object_height, /*tall_suffix=*/true);
+    std::string layer_height_str = format_layer_height(layer_height);
 
     // Check if thumbnail is a local file (background thread - filesystem OK)
     bool thumb_is_local = !thumb_path.empty() && std::filesystem::exists(thumb_path);
@@ -1551,106 +1569,53 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                     spdlog::debug("[{}] No thumbnail in metadata for {}, extracting from gcode",
                                   self->get_name(), gcode_path);
 
-                    // Download first 100KB of gcode (thumbnails are always in header)
-                    constexpr size_t THUMBNAIL_HEADER_SIZE = 100 * 1024;
-
-                    // Create context for prescale callback safety. capture(),
-                    // not create(): nav_generation_ belongs to panel
-                    // navigation, so a gcode extraction must observe it, not
-                    // advance it.
+                    // Context for prescale callback safety. capture(), not
+                    // create(): nav_generation_ belongs to panel navigation,
+                    // so a gcode extraction must observe it, not advance it.
                     ThumbnailLoadContext ctx = ThumbnailLoadContext::capture(
                         self->thumbnail_alive_, &self->nav_generation_);
 
-                    self->api_->transfers().download_file_partial(
-                        "gcodes", gcode_path, THUMBNAIL_HEADER_SIZE,
-                        // Success callback - extract thumbnails from gcode content
-                        [self, panel_tok, panel_name, panel_api, file_idx, filename_copy,
-                         gcode_path, ctx](const std::string& content) {
-                            // HttpExecutor worker. The parse and the cache write below
-                            // are deliberately left here — they are the expensive part
-                            // and touch no panel state. What must NOT happen on this
-                            // thread is a `self` dereference, so everything the body
-                            // needs from the panel (name, api, lifetime) was captured
-                            // by value on the main thread instead.
-                            auto thumbnails =
-                                helix::gcode::extract_thumbnails_from_content(content);
-
-                            if (thumbnails.empty()) {
-                                spdlog::debug("[{}] No embedded thumbnails in {}", panel_name,
-                                              gcode_path);
-                                return;
-                            }
-
-                            // Use the largest thumbnail (already sorted largest-first)
-                            const auto& best = thumbnails[0];
-                            spdlog::debug("[{}] Extracted {}x{} thumbnail ({} bytes) from {}",
-                                          panel_name, best.width, best.height, best.png_data.size(),
-                                          gcode_path);
-
-                            // Save to cache using the gcode path as identifier
-                            std::string cache_key = gcode_path + "_extracted";
-                            std::string lvgl_path =
-                                get_thumbnail_cache().save_raw_png(cache_key, best.png_data);
-
-                            if (lvgl_path.empty()) {
-                                spdlog::warn("[{}] Failed to cache extracted thumbnail for {}",
-                                             panel_name, gcode_path);
-                                return;
-                            }
-
-                            // Feed through prescale pipeline for .bin generation
-                            // (avoids runtime 300x300→160x160 scaling on every frame)
-                            ThumbnailRequest req;
-                            req.key = cache_key;
-                            req.target = helix::ThumbnailProcessor::get_target_for_display();
-                            req.api = panel_api;
-
-                            get_thumbnail_cache().fetch(
-                                req, ctx,
-                                [self, panel_tok, file_idx,
-                                 filename_copy](const std::string& optimized, bool /*degraded*/) {
-                                    // Everything that touches the panel happens in the
-                                    // queued apply below, which re-checks the token on
-                                    // the main thread.
-                                    struct ExtractedThumbUpdate {
-                                        PrintSelectPanel* panel;
-                                        helix::LifetimeToken token;
-                                        size_t index;
-                                        std::string filename;
-                                        std::string lvgl_path;
-                                    };
-                                    helix::ui::queue_update<ExtractedThumbUpdate>(
-                                        std::make_unique<ExtractedThumbUpdate>(ExtractedThumbUpdate{
-                                            self, panel_tok, file_idx, filename_copy, optimized}),
-                                        [](ExtractedThumbUpdate* t) {
-                                            // Panel may have been destroyed between the
-                                            // fetch completing and this queued apply.
-                                            if (t->token.expired()) {
-                                                return;
-                                            }
-                                            if (t->index < t->panel->file_list_.size() &&
-                                                t->panel->file_list_[t->index].filename ==
-                                                    t->filename) {
-                                                t->panel->file_list_[t->index].thumbnail_path =
-                                                    t->lvgl_path;
-                                                spdlog::info(
-                                                    "[{}] Extracted thumbnail for {}: {}",
-                                                    t->panel->get_name(), t->filename,
-                                                    t->panel->file_list_[t->index].thumbnail_path);
-                                                t->panel->schedule_view_refresh();
-                                            }
-                                        });
-                                },
-                                [panel_name, filename_copy](const std::string& error) {
-                                    spdlog::warn(
-                                        "[{}] Failed to prescale extracted thumbnail for {}: {}",
-                                        panel_name, filename_copy, error);
+                    helix::fetch_thumbnail_from_gcode(
+                        gcode_path, helix::GCODE_THUMBNAIL_HEADER_BYTES, panel_api,
+                        helix::ThumbnailProcessor::get_target_for_display(), ctx,
+                        [self, panel_tok, file_idx, filename_copy](const std::string& optimized,
+                                                                   bool /*degraded*/) {
+                            // Everything that touches the panel happens in the
+                            // queued apply below, which re-checks the token on
+                            // the main thread.
+                            struct ExtractedThumbUpdate {
+                                PrintSelectPanel* panel;
+                                helix::LifetimeToken token;
+                                size_t index;
+                                std::string filename;
+                                std::string lvgl_path;
+                            };
+                            helix::ui::queue_update<ExtractedThumbUpdate>(
+                                std::make_unique<ExtractedThumbUpdate>(ExtractedThumbUpdate{
+                                    self, panel_tok, file_idx, filename_copy, optimized}),
+                                [](ExtractedThumbUpdate* t) {
+                                    // Panel may have been destroyed between the
+                                    // fetch completing and this queued apply.
+                                    if (t->token.expired()) {
+                                        return;
+                                    }
+                                    if (t->index < t->panel->file_list_.size() &&
+                                        t->panel->file_list_[t->index].filename == t->filename) {
+                                        t->panel->file_list_[t->index].thumbnail_path =
+                                            t->lvgl_path;
+                                        spdlog::info("[{}] Extracted thumbnail for {}: {}",
+                                                     t->panel->get_name(), t->filename,
+                                                     t->panel->file_list_[t->index].thumbnail_path);
+                                        t->panel->schedule_view_refresh();
+                                    }
                                 });
                         },
-                        // Error callback - silent fail (file might be too small or inaccessible)
-                        [panel_name, gcode_path](const MoonrakerError& error) {
-                            spdlog::debug("[{}] Failed to download gcode header for {}: {}",
-                                          panel_name, gcode_path, error.message);
+                        [panel_name, filename_copy](const std::string& error) {
+                            // Silent-fail by design: thumbnail-less folders
+                            // are normal, and a warn here floods the log per
+                            // file per scroll.
+                            spdlog::debug("[{}] Failed to extract thumbnail for {}: {}", panel_name,
+                                          filename_copy, error);
                         });
                 }
             }
@@ -2141,6 +2106,11 @@ void PrintSelectPanel::show_delete_confirmation() {
                      get_name());
         return;
     }
+    // A USB file has no Moonraker path to delete.
+    if (!selected_local_path_.empty()) {
+        spdlog::debug("[{}] Delete refused for USB file {}", get_name(), selected_local_path_);
+        return;
+    }
     std::string filename(selected_filename_buffer_);
     detail_view_->show_delete_confirmation(filename);
 }
@@ -2590,6 +2560,12 @@ void PrintSelectPanel::create_detail_view() {
     // route their tap here so there is ONE opener and ONE modal instance for
     // every backend — the same entry the preflight "Remap…" button uses.
     detail_view_->set_on_remap_requested([this]() { open_remap_modal(); });
+    // The card's Set up tap. Same modal the boot-time prompt uses, so a user who
+    // dismissed that one still has a way in from the place the refusal is shown.
+    detail_view_->set_on_plugin_setup_requested([this]() {
+        plugin_install_modal_.set_installer(&plugin_installer_);
+        plugin_install_modal_.show(lv_screen_active());
+    });
 
     // Re-enable the print button when macro analysis completes. The legacy
     // bullet-text "preprint steps" display has been replaced by the dynamic
@@ -2662,6 +2638,7 @@ void PrintSelectPanel::apply_file_selection(const PrintFileData& file) {
     selected_filament_colors_ = file.filament_colors;
     selected_filament_materials_ = file.filament_types;
     selected_file_size_bytes_ = file.file_size_bytes;
+    selected_local_path_ = file.local_path;
     selected_modified_timestamp_ = file.modified_timestamp;
     selected_gcode_end_byte_ = file.gcode_end_byte;
     selected_history_status_ = file.history_status;
@@ -2736,6 +2713,9 @@ void PrintSelectPanel::on_file_long_pressed(size_t file_index) {
 }
 
 void PrintSelectPanel::start_print(bool force) {
+    if (usb_copy_in_flight_) {
+        return;
+    }
     if (!print_controller_) {
         spdlog::error("[{}] Cannot start print - controller not initialized", get_name());
         NOTIFY_ERROR(lv_tr("Cannot start print: internal error"));
@@ -2774,13 +2754,168 @@ void PrintSelectPanel::start_print(bool force) {
         }
     }
 
-    // Set the file to print in the controller
+    // Everything about the tapped file is read now: a USB copy lands later,
+    // by when the user may have opened another file.
+    const std::string filename = selected_filename_buffer_;
+    std::vector<std::string> colors = selected_filament_colors_;
+    std::string thumbnail = selected_detail_thumbnail_buffer_;
+    if (!selected_local_path_.empty()) {
+        copy_usb_file_to_printer([this, colors = std::move(colors),
+                                  thumbnail = std::move(thumbnail)](const std::string& dest) {
+            const size_t slash = dest.rfind('/');
+            dispatch_print(dest.substr(slash + 1), dest.substr(0, slash), colors, thumbnail);
+        });
+        return;
+    }
+    dispatch_print(filename, current_path_, colors, thumbnail);
+}
+
+void PrintSelectPanel::dispatch_print(const std::string& filename, const std::string& dir,
+                                      const std::vector<std::string>& filament_colors,
+                                      const std::string& thumbnail) {
     // Pass extracted thumbnail path so USB/embedded thumbnails propagate to print status
-    print_controller_->set_file(selected_filename_buffer_, current_path_, selected_filament_colors_,
-                                selected_detail_thumbnail_buffer_);
+    print_controller_->set_file(filename, dir, filament_colors, thumbnail);
 
     // Delegate to the print start controller
     print_controller_->initiate();
+}
+
+void PrintSelectPanel::copy_usb_file_to_printer(std::function<void(const std::string& dest)> then) {
+    if (!api_) {
+        NOTIFY_ERROR(lv_tr("Cannot start print: internal error"));
+        return;
+    }
+
+    UsbCopyRequest req{selected_filename_buffer_, selected_local_path_, selected_file_size_bytes_,
+                       ++usb_copy_generation_, std::move(then)};
+    usb_copy_in_flight_ = true;
+    BusyOverlay::show(lv_tr("Copying from USB..."));
+
+    // BusyOverlay has no cancel and the transport's own timeout is an hour,
+    // so a copy that stops making progress is abandoned here instead. One
+    // shot, pushed back by every progress report.
+    lv_timer_t* watchdog = lv_timer_create(
+        [](lv_timer_t* t) {
+            auto* self = static_cast<PrintSelectPanel*>(lv_timer_get_user_data(t));
+            // LVGL deletes a finished one-shot itself.
+            self->usb_copy_watchdog_.release();
+            self->abandon_stalled_usb_copy();
+        },
+        kUsbCopyStallMs, this);
+    lv_timer_set_repeat_count(watchdog, 1);
+    usb_copy_watchdog_.reset(watchdog);
+
+    // What the copy folder already holds decides the name (choose_usb_copy_target).
+    // A listing, not a metadata lookup: one request answers every candidate
+    // name, and its sizes come from the filesystem rather than a metascan.
+    const std::string dir = kUsbCopyDir;
+    auto tok = lifetime_.token();
+    api_->files().list_files(
+        "gcodes", dir, false,
+        [this, tok, dir, req](const std::vector<FileInfo>& files) mutable {
+            // Some Moonraker versions answer a missing directory with the root
+            // listing, so only entries directly under dir count.
+            std::map<std::string, uint64_t> existing;
+            const std::string prefix = dir + "/";
+            for (const auto& f : files) {
+                if (!f.is_dir && f.path.rfind(prefix, 0) == 0 &&
+                    f.path.find('/', prefix.size()) == std::string::npos) {
+                    existing[f.path.substr(prefix.size())] = f.size;
+                }
+            }
+            tok.defer("PrintSelectPanel::usb_copy_listed",
+                      [this, req = std::move(req), existing = std::move(existing)]() mutable {
+                          if (usb_copy_current(req.generation)) {
+                              upload_usb_copy(std::move(req), existing);
+                          }
+                      });
+        },
+        [this, tok, req](const MoonrakerError& err) mutable {
+            tok.defer("PrintSelectPanel::usb_copy_list_failed",
+                      [this, req = std::move(req), err]() mutable {
+                          if (!usb_copy_current(req.generation)) {
+                              return;
+                          }
+                          // Moonraker reports a folder that does not exist yet as 404.
+                          if (err.code == 404) {
+                              upload_usb_copy(std::move(req), {});
+                              return;
+                          }
+                          end_usb_copy();
+                          NOTIFY_ERROR(lv_tr("Could not copy {} from USB: {}"), req.filename,
+                                       err.user_message());
+                      });
+        });
+}
+
+void PrintSelectPanel::upload_usb_copy(UsbCopyRequest req,
+                                       const std::map<std::string, uint64_t>& existing) {
+    const auto target = choose_usb_copy_target(req.filename, req.size, existing);
+    const std::string dest = std::string(kUsbCopyDir) + "/" + target.name;
+    if (target.reuse) {
+        spdlog::info("[{}] gcodes/{} already holds {} ({} bytes); not copying", get_name(), dest,
+                     req.local_path, req.size);
+        end_usb_copy();
+        req.then(dest);
+        return;
+    }
+
+    spdlog::info("[{}] Copying USB file {} to gcodes/{}", get_name(), req.local_path, dest);
+    const std::string filename = req.filename;
+    const uint64_t generation = req.generation;
+    auto tok = lifetime_.token();
+    api_->transfers().upload_file_from_path(
+        "gcodes", dest, req.local_path,
+        lifetime_.bg_cb("PrintSelectPanel::usb_copy_done",
+                        [this, dest, generation, then = std::move(req.then)]() {
+                            if (usb_copy_current(generation)) {
+                                end_usb_copy();
+                                then(dest);
+                            }
+                        }),
+        [this, tok, generation, filename](const MoonrakerError& err) {
+            tok.defer("PrintSelectPanel::usb_copy_failed", [this, generation, filename, err]() {
+                if (usb_copy_current(generation)) {
+                    end_usb_copy();
+                    NOTIFY_ERROR(lv_tr("Could not copy {} from USB: {}"), filename,
+                                 err.user_message());
+                }
+            });
+        },
+        // Runs per chunk on the transfer thread: only a whole-percent change
+        // is worth a trip through the UI queue.
+        [this, tok, label = std::string(lv_tr("Copying from USB")),
+         last_pct = -1](size_t done, size_t total) mutable {
+            const int pct = total > 0 ? static_cast<int>(done * 100 / total) : 0;
+            if (pct == last_pct) {
+                return;
+            }
+            last_pct = pct;
+            tok.defer("PrintSelectPanel::usb_copy_progress", [this, label, pct]() {
+                BusyOverlay::set_progress(label, static_cast<float>(pct));
+                if (lv_timer_t* watchdog = usb_copy_watchdog_.get()) {
+                    lv_timer_reset(watchdog);
+                }
+            });
+        });
+}
+
+bool PrintSelectPanel::usb_copy_current(uint64_t generation) const {
+    return usb_copy_in_flight_ && generation == usb_copy_generation_;
+}
+
+void PrintSelectPanel::end_usb_copy() {
+    usb_copy_in_flight_ = false;
+    usb_copy_watchdog_.reset();
+    BusyOverlay::hide();
+}
+
+void PrintSelectPanel::abandon_stalled_usb_copy() {
+    spdlog::warn("[{}] USB copy made no progress for {}s; abandoning it", get_name(),
+                 kUsbCopyStallMs / 1000);
+    ++usb_copy_generation_; // a late answer from the abandoned copy is ignored
+    end_usb_copy();
+    NOTIFY_ERROR(lv_tr("Copying from USB stopped responding"));
 }
 
 void PrintSelectPanel::show_preflight_modal(const helix::PreflightResult& pf) {
@@ -2814,6 +2949,12 @@ void PrintSelectPanel::on_preflight_remap() {
 // apply_remap(), dispatched on RemapStrategy. Print-start is likewise already
 // strategy-dispatched (PrintStartController), so Native and SnapmakerNative both
 // read the same shared card store and need no special opener.
+void PrintSelectPanel::show_remap_help() {
+    if (detail_view_) {
+        detail_view_->show_remap_help_modal();
+    }
+}
+
 void PrintSelectPanel::open_remap_modal() {
     if (!detail_view_) {
         spdlog::warn("[{}] Remap requested with no detail view", get_name());
@@ -2824,23 +2965,15 @@ void PrintSelectPanel::open_remap_modal() {
     if (!backend) {
         return;
     }
-    const auto strategy = backend->get_remap_strategy();
-    if (!helix::printer::can_remap(*backend)) {
-        return;
-    }
 
-    // GcodeRewrite is the generic fallback for backends with no native routing
-    // table: it prints a modified temp copy and relies on the HelixPrint plugin
-    // to patch print history back to the original filename. No backend ships this
-    // strategy today (ACE will adopt it once ACE_CHANGE_TOOL is implemented).
-    // Guard BEFORE opening the modal so the user sees the actionable alert instead
-    // of a picker whose Done would silently fail.
-    if (strategy == AmsBackend::RemapStrategy::GcodeRewrite &&
-        !printer_state_.service_has_helix_plugin()) {
-        helix::ui::modal_alert(lv_tr("Remap needs the HelixPrint plugin"),
-                               lv_tr("Install the HelixPrint plugin in Advanced settings to remap "
-                                     "filament without affecting print history."),
-                               ModalSeverity::Info, lv_tr("OK"));
+    // The same answer the card published, asked again here because this opener
+    // is reachable from the preflight modal too and a subject is only as fresh
+    // as its last publish. Every refusal is already stated on the card, so this
+    // is a guard, not a second place to explain anything.
+    const auto block = detail_view_->current_remap_block();
+    if (block != helix::printer::RemapBlock::None) {
+        spdlog::debug("[{}] Remap opener declined: {}", get_name(),
+                      helix::printer::remap_block_name(block));
         return;
     }
 
@@ -2851,9 +2984,10 @@ void PrintSelectPanel::open_remap_modal() {
     // card instance's tool_info_ is empty.
     auto tool_info = detail_view_->get_used_tool_info();
 
+    // remap_block() already refused an empty job as NothingToRemap, so reaching
+    // here with none means the tool set changed between publish and tap.
     if (tool_info.empty()) {
         spdlog::warn("[{}] Remap: no tools in pre-flight result", get_name());
-        NOTIFY_INFO(lv_tr("Nothing to remap"));
         return;
     }
 
@@ -2960,6 +3094,10 @@ void PrintSelectPanel::apply_remap(const std::vector<helix::ToolMapping>& update
 }
 
 void PrintSelectPanel::delete_file() {
+    if (!selected_local_path_.empty()) {
+        hide_delete_confirmation();
+        return;
+    }
     std::string filename_to_delete(selected_filename_buffer_);
     auto* self = this;
     auto token = lifetime_.token();

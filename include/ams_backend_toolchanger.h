@@ -93,8 +93,13 @@ class AmsBackendToolChanger : public AmsSubscriptionBackend {
         return "toolchanger";
     }
 
+    /// ASSIGN_TOOL belongs to klipper-toolchanger. A machine that drives swaps
+    /// with its own T<n> commands instead (tool_commands_.present) has no
+    /// tool-number indirection to rewrite: those macros name the physical tool
+    /// outright. Klipper answers an unknown command by logging it and carrying
+    /// on, so a remap sent to such a machine is accepted and never applied.
     [[nodiscard]] RemapStrategy get_remap_strategy() const override {
-        return RemapStrategy::Native;
+        return tool_commands_.present ? RemapStrategy::None : RemapStrategy::Native;
     }
 
     /// A tool changer has one extruder per tool, so its table is identity — but it
@@ -261,6 +266,11 @@ class AmsBackendToolChanger : public AmsSubscriptionBackend {
     void persist_slot_weight(int slot_index, float remaining_weight_g,
                              float total_weight_g) override;
     AmsError set_tool_mapping(int tool_number, int slot_index) override;
+
+    /// Point G-code tool @p tool_number at the physical tool named
+    /// @p physical_tool_name, or refuse when this machine has no such command.
+    /// The one emitter, so the refusal cannot be reached around.
+    AmsError assign_tool(const std::string& physical_tool_name, int tool_number);
 
     // Tool mapping via klipper-toolchanger ASSIGN_TOOL command
     AmsError reset_tool_mappings() override;

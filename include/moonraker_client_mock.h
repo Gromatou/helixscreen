@@ -25,6 +25,11 @@ class MockPrinterState;
 // Forward declaration for MoonrakerClientMock (needed for internal handler registry)
 class MoonrakerClientMock;
 
+// Forward declaration for the test-access friend (tests/test_helpers/)
+namespace helix {
+class MoonrakerClientMockTestAccess;
+} // namespace helix
+
 // Forward declaration for internal handler registry
 namespace mock_internal {
 using MethodHandler =
@@ -956,6 +961,8 @@ class MoonrakerClientMock : public helix::MoonrakerClient {
     nlohmann::json pin_watch_status_json() const;
 
   private:
+    friend class helix::MoonrakerClientMockTestAccess;
+
     /**
      * @brief Populate hardware lists based on configured printer type
      *
@@ -1399,6 +1406,13 @@ class MoonrakerClientMock : public helix::MoonrakerClient {
     std::string last_send_script_; // `script` param when method == printer.gcode.script
     uint32_t last_send_timeout_ms_{0};
     bool last_send_silent_{false};
+
+    /// True only between an explicit disconnect() and the next successful
+    /// connect(): during that window send_jsonrpc refuses with CONNECTION_LOST
+    /// like the real client. Construction leaves it false so fixtures that
+    /// never simulate a link keep getting answers (the mock's initial
+    /// ConnectionState is DISCONNECTED and must not gate sends by itself).
+    bool sim_link_down_{false};
 
     // Intent of the in-flight send_jsonrpc() dispatch, read by the method
     // handlers via current_send_intent().

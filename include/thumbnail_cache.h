@@ -86,6 +86,8 @@ struct ThumbnailRequest {
 };
 
 class ThumbnailCache {
+    friend class ThumbnailCacheTestAccess;
+
   public:
     /// Default cache subdirectory name (appended to base cache dir)
     static constexpr const char* CACHE_SUBDIR = "helix_thumbs";
@@ -250,6 +252,11 @@ class ThumbnailCache {
      * Use this when thumbnail data is extracted from gcode files instead of
      * downloaded via Moonraker's HTTP API (e.g., USB files where Moonraker
      * can't write .thumbs directory).
+     *
+     * Overwriting a key drops the pre-scaled .bin variants derived from the
+     * previous PNG, so a re-slice under the same name cannot be served
+     * through stale prescaled artifacts (callers that pass no
+     * source_modified have no other freshness check).
      *
      * @param source_identifier Unique identifier for this thumbnail (typically
      *        the relative_path that would be used with fetch(), e.g., "usb/file.gcode")
@@ -556,9 +563,20 @@ class ThumbnailCache {
     /// @pre mutex_ is held.
     void forget_file_locked(const std::filesystem::path& path) const;
 
+    /// Record that a lookup just served @p path (LVGL or filesystem form).
+    /// Eviction orders by the later of a file's write and its last use.
+    void note_use(const std::string& path) const;
+
     /// Record a file this cache just wrote, then run an eviction check. The
     /// shape every write site uses so no write can reach eviction unindexed.
     void note_write_and_evict(const std::string& path);
+
+    /// Remove the pre-scaled .bin variants ({hash}_{w}x{h}_{format}.bin) for
+    /// one key. What both invalidate() and save_raw_png() use to keep a
+    /// freshly written PNG from being served through bins prescaled from the
+    /// previous one.
+    /// @pre mutex_ is held.
+    size_t remove_bin_variants_locked(const std::string& hash);
 
     /**
      * @brief Eviction pass proper.
@@ -575,6 +593,14 @@ class ThumbnailCache {
     /// The index and its bookkeeping. All guarded by mutex_; mutable because
     /// get_cache_size() is const and still has to prime and reconcile.
     mutable std::map<std::filesystem::path, IndexEntry> index_;
+    /// When each indexed file was last served by a cache hit. Kept apart from
+    /// IndexEntry because a rescan rebuilds that from the directory, and a use
+    /// is nothing the directory records: mtime is the freshness stamp, so a hit
+    /// must never move it. Guarded by usage_mutex_, NOT mutex_: hits are
+    /// recorded on the UI thread, and mutex_ is held across whole directory
+    /// walks and unlinks on the workers. Lock order: mutex_, then usage_mutex_.
+    mutable std::map<std::filesystem::path, std::filesystem::file_time_type> last_used_;
+    mutable std::mutex usage_mutex_;
     mutable size_t index_total_ = 0;
     mutable bool index_primed_ = false;
     mutable size_t checks_since_scan_ = 0;
@@ -652,3 +678,40 @@ class ThumbnailCache {
  * @return Reference to the global ThumbnailCache
  */
 ThumbnailCache& get_thumbnail_cache();
+
+namespace helix {
+
+/// Header size that covers every slicer's embedded-thumbnail comment block.
+constexpr size_t GCODE_THUMBNAIL_HEADER_BYTES = 100 * 1024;
+
+/// Error-text prefix marking a PERMANENT extraction verdict: the gcode header
+/// was read and contains no embedded thumbnails. Every other failure flavor
+/// (download error, cache write error) is transient and must stay retryable,
+/// so consumers keying a negative cache off extraction errors match THIS
+/// prefix, nothing else. Compared by prefix so the message still carries the
+/// path.
+inline constexpr const char* GCODE_THUMBNAIL_NONE_EMBEDDED = "no embedded thumbnails in ";
+
+/**
+ * @brief Self-serve a thumbnail from the gcode file header when metadata has none
+ *
+ * For files whose metadata record carries no thumbnails — a slicer run without
+ * them, a USB mount Moonraker can't write .thumbs to, or a customized Moonraker
+ * whose metadata path drops them — downloads the first @p max_header_bytes of
+ * @p gcode_path, extracts the largest embedded PNG, caches it under
+ * "<gcode_path>_extracted", and feeds it through the prescale pipeline via
+ * ThumbnailCache::fetch.
+ *
+ * The parse and the cache write run on the HttpExecutor worker thread; nothing
+ * there touches LVGL or the caller. Callbacks have the same contract as
+ * ThumbnailCache::fetch's: marshalled to the main thread, with @p on_success
+ * dropped when @p ctx has been superseded. @p on_error receives any failure
+ * along the way (download, no embedded thumbnails, cache write, prescale).
+ */
+void fetch_thumbnail_from_gcode(const std::string& gcode_path, size_t max_header_bytes,
+                                IMoonrakerAPI* api, const ThumbnailTarget& target,
+                                ThumbnailLoadContext ctx,
+                                ThumbnailCache::SuccessCallback on_success,
+                                ThumbnailCache::ErrorCallback on_error);
+
+} // namespace helix

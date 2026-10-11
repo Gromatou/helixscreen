@@ -5,6 +5,7 @@
 
 #include "ui_error_reporting.h"
 
+#include "json_utils.h"
 #include "moonraker_api_internal.h"
 #include "moonraker_client.h"
 #include "spdlog/spdlog.h"
@@ -193,19 +194,83 @@ void MoonrakerFileAPI::get_file_metadata(const std::string& filename,
     );
 }
 
+/// How long after a metascan completes (any outcome that reached Moonraker)
+/// before the same file may be scanned again. Long enough that a file
+/// Moonraker's parser keeps failing is not rescanned on every panel visit,
+/// short enough that a Moonraker upgrade or re-slice recovers within a
+/// session.
+static constexpr auto kMetascanRescanCooldown = std::chrono::minutes(10);
+
+void MoonrakerFileAPI::prune_expired_metascan_cooldown_locked(
+    std::chrono::steady_clock::time_point now) {
+    for (auto it = metascan_cooldown_until_.begin(); it != metascan_cooldown_until_.end();) {
+        it = (it->second <= now) ? metascan_cooldown_until_.erase(it) : std::next(it);
+    }
+}
+
 void MoonrakerFileAPI::metascan_file(const std::string& filename, FileMetadataCallback on_success,
                                      ErrorCallback on_error, bool silent) {
     // Validate filename path
     if (reject_invalid_path(filename, "metascan_file", on_error, silent))
         return;
 
+    // One scan per file at a time; see metascan_gate_mutex_ in the header for
+    // why duplicates must not reach Moonraker.
+    const std::string& key = filename;
+    bool suppressed = false;
+    {
+        std::lock_guard<std::mutex> lock(metascan_gate_mutex_);
+        prune_expired_metascan_cooldown_locked(std::chrono::steady_clock::now());
+        if (metascan_in_flight_.count(key) != 0) {
+            spdlog::debug("[FileAPI] Metascan already in flight for {}, dropping duplicate",
+                          filename);
+            suppressed = true;
+        } else if (auto it = metascan_cooldown_until_.find(key);
+                   it != metascan_cooldown_until_.end() &&
+                   std::chrono::steady_clock::now() < it->second) {
+            spdlog::debug("[FileAPI] Metascan for {} inside completion cooldown, skipping",
+                          filename);
+            suppressed = true;
+        } else {
+            metascan_in_flight_.insert(key);
+        }
+    }
+    if (suppressed) {
+        // Answer locally so the caller's error path still runs (the panel's
+        // gcode-extraction fallback), rather than leaving its card waiting on
+        // a callback that will never come.
+        if (on_error) {
+            on_error(MoonrakerError::not_ready(
+                "server.files.metascan",
+                "scan for this file already in flight or inside rescan cooldown"));
+        }
+        return;
+    }
+
+    // In-flight release, shared by every terminal path. The cooldown arm is
+    // separate: a CONNECTION_LOST error means the request never reached
+    // Moonraker (link down, queue full, send refused), and rescanning when
+    // the link returns is exactly what should happen.
+    auto clear_in_flight = [this, key]() {
+        std::lock_guard<std::mutex> lock(metascan_gate_mutex_);
+        metascan_in_flight_.erase(key);
+    };
+    auto finish = [this, key]() {
+        std::lock_guard<std::mutex> lock(metascan_gate_mutex_);
+        metascan_in_flight_.erase(key);
+        metascan_cooldown_until_[key] = std::chrono::steady_clock::now() + kMetascanRescanCooldown;
+    };
+
     json params = {{"filename", filename}};
 
     spdlog::debug("[FileAPI] Triggering metascan for file: {}", filename);
 
-    client_.send_jsonrpc(
+    const helix::RequestId id = client_.send_jsonrpc(
         "server.files.metascan", params,
-        [this, on_success, on_error, filename](json response) {
+        [this, on_success, on_error, filename, finish](json response) {
+            // Release the gate before parsing: the parse-exception path below
+            // must not leave the request marked in flight.
+            finish();
             // Parse inside the try, deliver outside it — see list_files above.
             FileMetadata metadata;
             try {
@@ -218,10 +283,24 @@ void MoonrakerFileAPI::metascan_file(const std::string& filename, FileMetadataCa
             spdlog::debug("[FileAPI] Metascan successful for: {}", filename);
             on_success(metadata);
         },
-        on_error,
+        [on_error, finish, clear_in_flight](const MoonrakerError& error) {
+            if (error.type == MoonrakerErrorType::CONNECTION_LOST) {
+                clear_in_flight();
+            } else {
+                finish();
+            }
+            on_error(error);
+        },
         0,     // timeout_ms: use default
         silent // silent: suppress RPC_ERROR events (default true)
     );
+    if (id == helix::INVALID_REQUEST_ID) {
+        // The tracker's duplicate-id registration branch returns invalid
+        // without invoking any callback; every other invalid return has
+        // already delivered a CONNECTION_LOST error (and cleared above).
+        // Either way nothing reached the wire, so release without cooldown.
+        clear_in_flight();
+    }
 }
 
 void MoonrakerFileAPI::delete_file(const std::string& filename, SuccessCallback on_success,
@@ -340,8 +419,9 @@ std::vector<FileInfo> MoonrakerFileAPI::parse_file_list(const json& response) {
 
     const json& result = response["result"];
 
-    // Helper lambdas to safely extract values, mirroring parse_file_metadata below
-    // (Moonraker returns null for missing metadata). Type-checking each field
+    // Every field is read type-safely, as in parse_file_metadata below (Moonraker
+    // returns null for missing metadata, and some forks send numbers as JSON
+    // strings, prestonbrown/helixscreen#1713). Type-checking each field
     // matters more here than there: this loop builds the whole file browser, so a
     // single wrong-typed entry from a Moonraker fork would otherwise throw and
     // abort the entire listing rather than degrading that one row.
@@ -350,20 +430,6 @@ std::vector<FileInfo> MoonrakerFileAPI::parse_file_list(const json& response) {
             return obj[key].get<std::string>();
         }
         return {};
-    };
-
-    auto get_double = [](const json& obj, const char* key) -> double {
-        if (obj.contains(key) && obj[key].is_number()) {
-            return obj[key].get<double>();
-        }
-        return 0.0;
-    };
-
-    auto get_uint64 = [](const json& obj, const char* key) -> uint64_t {
-        if (obj.contains(key) && obj[key].is_number()) {
-            return obj[key].get<uint64_t>();
-        }
-        return 0;
     };
 
     // Moonraker returns a flat array of file/directory objects in "result"
@@ -384,8 +450,8 @@ std::vector<FileInfo> MoonrakerFileAPI::parse_file_list(const json& response) {
             } else {
                 info.filename = get_string(item, "filename");
             }
-            info.size = get_uint64(item, "size");
-            info.modified = get_double(item, "modified");
+            info.size = helix::json_util::safe_uint64(item, "size");
+            info.modified = helix::json_util::safe_double(item, "modified");
             info.permissions = get_string(item, "permissions");
             info.is_dir = false; // server.files.list only returns files
             files.push_back(info);
@@ -410,7 +476,7 @@ std::vector<FileInfo> MoonrakerFileAPI::parse_file_list(const json& response) {
                 info.filename = moonraker_path_leaf(dirname);
                 info.is_dir = true;
             }
-            info.modified = get_double(dir, "modified");
+            info.modified = helix::json_util::safe_double(dir, "modified");
             info.permissions = get_string(dir, "permissions");
             files.push_back(info);
         }
@@ -427,8 +493,8 @@ std::vector<FileInfo> MoonrakerFileAPI::parse_file_list(const json& response) {
             // builds (current_path + "/" + filename) doesn't double.
             info.filename = moonraker_path_leaf(get_string(file, "filename"));
             info.path = get_string(file, "path");
-            info.size = get_uint64(file, "size");
-            info.modified = get_double(file, "modified");
+            info.size = helix::json_util::safe_uint64(file, "size");
+            info.modified = helix::json_util::safe_double(file, "modified");
             info.permissions = get_string(file, "permissions");
             info.is_dir = false;
             files.push_back(info);
@@ -455,46 +521,28 @@ FileMetadata MoonrakerFileAPI::parse_file_metadata(const json& response) {
         return {};
     };
 
-    auto get_double = [&result](const char* key) -> double {
-        if (result.contains(key) && result[key].is_number()) {
-            return result[key].get<double>();
-        }
-        return 0.0;
-    };
-
-    auto get_uint64 = [&result](const char* key) -> uint64_t {
-        if (result.contains(key) && result[key].is_number()) {
-            return result[key].get<uint64_t>();
-        }
-        return 0;
-    };
-
-    auto get_uint32 = [&result](const char* key) -> uint32_t {
-        if (result.contains(key) && result[key].is_number()) {
-            return result[key].get<uint32_t>();
-        }
-        return 0;
-    };
+    // Numbers go through json_util, which also coerces the JSON strings ("0.2")
+    // some Moonraker forks send (prestonbrown/helixscreen#1713).
 
     // Basic file info
     metadata.filename = get_string("filename");
-    metadata.size = get_uint64("size");
-    metadata.modified = get_double("modified");
+    metadata.size = helix::json_util::safe_uint64(result, "size");
+    metadata.modified = helix::json_util::safe_double(result, "modified");
 
     // Slicer info
     metadata.slicer = get_string("slicer");
     metadata.slicer_version = get_string("slicer_version");
 
     // Print info
-    metadata.print_start_time = get_double("print_start_time");
+    metadata.print_start_time = helix::json_util::safe_double(result, "print_start_time");
     metadata.job_id = get_string("job_id");
-    metadata.layer_count = get_uint32("layer_count");
-    metadata.object_height = get_double("object_height");
-    metadata.estimated_time = get_double("estimated_time");
+    metadata.layer_count = moonraker_internal::json_count_or_zero(result, "layer_count");
+    metadata.object_height = helix::json_util::safe_double(result, "object_height");
+    metadata.estimated_time = helix::json_util::safe_double(result, "estimated_time");
 
     // Filament info
-    metadata.filament_total = get_double("filament_total");
-    metadata.filament_weight_total = get_double("filament_weight_total");
+    metadata.filament_total = helix::json_util::safe_double(result, "filament_total");
+    metadata.filament_weight_total = helix::json_util::safe_double(result, "filament_weight_total");
 
     // Per-tool filament weights / usage. Multi-format parser handles slicer
     // variance. Empty result means "unknown" — caller must NOT treat as all-zero.
@@ -514,8 +562,8 @@ FileMetadata MoonrakerFileAPI::parse_file_metadata(const json& response) {
             (semicolon != std::string::npos) ? all_names.substr(0, semicolon) : all_names;
     }
     // Layer height info
-    metadata.layer_height = get_double("layer_height");
-    metadata.first_layer_height = get_double("first_layer_height");
+    metadata.layer_height = helix::json_util::safe_double(result, "layer_height");
+    metadata.first_layer_height = helix::json_util::safe_double(result, "first_layer_height");
 
     // Filament colors (array of hex strings from slicer metadata)
     // Newer Moonraker versions return "filament_colors" as a JSON array.
@@ -554,12 +602,12 @@ FileMetadata MoonrakerFileAPI::parse_file_metadata(const json& response) {
     }
 
     // Temperature info
-    metadata.first_layer_bed_temp = get_double("first_layer_bed_temp");
-    metadata.first_layer_extr_temp = get_double("first_layer_extr_temp");
+    metadata.first_layer_bed_temp = helix::json_util::safe_double(result, "first_layer_bed_temp");
+    metadata.first_layer_extr_temp = helix::json_util::safe_double(result, "first_layer_extr_temp");
 
     // G-code info
-    metadata.gcode_start_byte = get_uint64("gcode_start_byte");
-    metadata.gcode_end_byte = get_uint64("gcode_end_byte");
+    metadata.gcode_start_byte = helix::json_util::safe_uint64(result, "gcode_start_byte");
+    metadata.gcode_end_byte = helix::json_util::safe_uint64(result, "gcode_end_byte");
 
     // UUID for history matching (slicer-generated unique identifier)
     metadata.uuid = get_string("uuid");
@@ -570,12 +618,8 @@ FileMetadata MoonrakerFileAPI::parse_file_metadata(const json& response) {
             if (thumb.contains("relative_path") && thumb["relative_path"].is_string()) {
                 ThumbnailInfo info;
                 info.relative_path = thumb["relative_path"].get<std::string>();
-                if (thumb.contains("width") && thumb["width"].is_number()) {
-                    info.width = thumb["width"].get<int>();
-                }
-                if (thumb.contains("height") && thumb["height"].is_number()) {
-                    info.height = thumb["height"].get<int>();
-                }
+                info.width = helix::json_util::safe_int(thumb, "width");
+                info.height = helix::json_util::safe_int(thumb, "height");
                 metadata.thumbnails.push_back(info);
                 spdlog::trace("[FileAPI] Found thumbnail {}x{}: {}", info.width, info.height,
                               info.relative_path);

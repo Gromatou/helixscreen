@@ -106,6 +106,19 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
     AmsError recover() override;
     AmsError reset() override;
     AmsError clear_fault(int slot_index) override;
+    AmsError recover_with_state(const helix::RecoverStateRequest& request) override;
+    [[nodiscard]] bool supports_recover_with_state() const override {
+        return true;
+    }
+    /**
+     * @brief The MMU_RECOVER line asserting @p request.
+     *
+     * Names only what the request knows: an unknown gate is omitted, and an
+     * unset loaded flag leaves LOADED off so HH detects it with its sensors.
+     * BYPASS=1 replaces GATE, which HH then forces to bypass.
+     */
+    [[nodiscard]] static std::string
+    build_recover_command(const helix::RecoverStateRequest& request);
     AmsError eject_lane(int slot_index) override;
     [[nodiscard]] bool supports_lane_eject() const override {
         return true;
@@ -335,12 +348,6 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
     void apply_overrides(SlotInfo& slot, int slot_index);
     void persist_override(int slot_index, const SlotInfo& info);
 
-    // Build a " GATES=g0,g1,..." suffix targeting a specific unit's gates for
-    // MMU_HEATER on multi-unit (EMU) rigs. Returns "" for a single-unit MMU or
-    // unit<0 so the command omits GATES and HH defaults to all non-empty gates.
-    // Locks mutex_ internally — call with no lock held.
-    [[nodiscard]] std::string gates_suffix_for_unit(int unit) const;
-
     // Build context-aware recovery actions from live MMU state. Caller holds mutex_
     // (the base declares that contract; mutex_ is non-recursive, so this must not
     // lock).
@@ -467,6 +474,122 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
 
     std::string selector_type_; ///< Selector type from config (e.g., "VirtualSelector" for Type B)
 
+  public:
+    /// What the connect-time `mmu_machine` / `configfile.settings` pair says
+    /// about the install. Happy Hare 3 keeps every tunable on `[mmu]` and its
+    /// version as a number there (3.42); Happy Hare 4 has no `[mmu]`, splits
+    /// the tunables across `[mmu_parameters]`, `[mmu_unit_parameters <unit>]`
+    /// and `[mmu_toolhead <name>]`, and publishes `happy_hare_version` on
+    /// `mmu_machine`.
+    /// One unit's fields from the live mmu_machine.unit_N (v4).
+    struct MachineUnit {
+        std::string selector_type;
+        int first_gate = -1;
+        int num_gates = 0;
+        bool filament_always_gripped = false;
+        std::optional<bool> filament_buffer;
+        /// From the unit's configfile [mmu_unit <name>] encoder
+        std::optional<bool> has_encoder;
+        bool has_heater = false; ///< filament_heater or any filament_heaters entry
+    };
+    /// A per-unit capability v4 checks before it accepts a command or a
+    /// MMU_TEST_CONFIG parameter.
+    enum class UnitFeature { Servo, SelectorSpeed, Encoder, SyncToExtruder, FilamentBuffer };
+    /// Whether @p unit has @p feature. v3 knows only Type A from Type B, and
+    /// checks only parameter names, so there only the selector features apply.
+    [[nodiscard]] static bool unit_supports(const MachineUnit& unit, UnitFeature feature, bool v4);
+
+    struct MachineLayout {
+        std::string version;             ///< happy_hare_version; empty when unknown
+        double version_number = 0;       ///< 3.42, 4.0; 0 when unknown
+        bool v4 = false;                 ///< the one v4 predicate
+        int num_units = 1;               ///< mmu_machine.num_units, v4 only
+        std::string unit_params_section; ///< "mmu_unit_parameters <unit 0>", v4 only
+        std::string toolhead_section;    ///< "mmu_toolhead <name>", v4 only
+        std::optional<bool> has_bypass;  ///< any unit's has_bypass, v4 only
+        std::vector<MachineUnit> units;  ///< every mmu_machine.unit_N, v4 only
+    };
+    /// @p settings configfile.settings, @p live_mmu_machine the live object
+    /// (either may be empty).
+    [[nodiscard]] static MachineLayout read_machine_layout(const nlohmann::json& settings,
+                                                           const nlohmann::json& live_mmu_machine);
+    /// The name the install @p layout describes takes for tunable @p key,
+    /// which callers spell the way HelixScreen does; empty when that version
+    /// has none. Clog detection is ENABLE_CLOG_DETECTION /
+    /// MMU_CALIBRATION_CLOG_LENGTH before 3.42 and FLOWGUARD_ENCODER_MODE /
+    /// FLOWGUARD_ENCODER_MAX_MOTION from 3.42 on.
+    [[nodiscard]] static std::string param_name(const std::string& key,
+                                                const MachineLayout& layout);
+    /// The configfile value of tunable @p key from whichever section @p layout
+    /// keeps it in ([mmu] on v3; [mmu_parameters], the first unit's
+    /// [mmu_unit_parameters] or its [mmu_toolhead] on v4), or nullptr.
+    [[nodiscard]] static const nlohmann::json* find_config_param(const nlohmann::json& settings,
+                                                                 const MachineLayout& layout,
+                                                                 const std::string& key);
+
+    /// MMU_TEST_CONFIG with the clog mode and, in manual mode, the length,
+    /// named as the installed version takes them.
+    [[nodiscard]] std::optional<std::string>
+    clog_detection_mode_gcode(int mode, float det_length) const override;
+    /// flowguard_encoder_max_motion from 3.42 on; nullopt before, where the
+    /// length is the calibrated one the encoder reports live.
+    [[nodiscard]] std::optional<float> clog_detection_length_setting() const override;
+
+  private:
+    /// Version and config layout. Caller holds mutex_.
+    MachineLayout machine_layout_;
+    /// MMU_TEST_CONFIG's parameter for @p key, uppercased; empty when the
+    /// installed version has none. Caller holds mutex_.
+    [[nodiscard]] std::string test_config_param_locked(const std::string& key) const;
+    /// Unit @p unit has @p feature, from its mmu_machine fields, else the
+    /// machine-wide selector type. Caller holds mutex_.
+    [[nodiscard]] bool unit_supports_locked(int unit, UnitFeature feature) const;
+    /// The selected unit when it has @p feature, else the first that does.
+    /// Caller holds mutex_.
+    [[nodiscard]] std::optional<int> unit_with_locked(UnitFeature feature) const;
+    /// The unit an MMU_TEST_CONFIG of @p key targets: the selected unit when it
+    /// takes the parameter, else the first unit that does; nullopt when none
+    /// does or the installed version has no such parameter. v3 checks only
+    /// names, so there only selector_move_speed depends on the unit.
+    /// Caller holds mutex_.
+    [[nodiscard]] std::optional<int> test_config_unit_locked(const std::string& key) const;
+    /// `MMU_TEST_CONFIG <param>=<value>` for @p key, or nullopt when no unit
+    /// takes it. Caller holds mutex_.
+    [[nodiscard]] std::optional<std::string>
+    test_config_command_locked(const std::string& key, const std::string& value) const;
+    /// The selected unit (printer.mmu.unit). Caller holds mutex_.
+    [[nodiscard]] int active_unit_locked() const;
+    /// UNIT value naming every unit; v4 takes UNIT=ALL on its per-unit commands.
+    static constexpr int kAllUnits = -1;
+    /// " UNIT=<n>" (" UNIT=ALL" for kAllUnits) when a command has to name its
+    /// unit: a v4 install with more than one unit refuses a per-unit command
+    /// without it. Empty otherwise, and always on v3, whose MMU_TEST_CONFIG
+    /// rejects an unknown parameter. Caller holds mutex_.
+    [[nodiscard]] std::string unit_suffix_locked(int unit) const;
+    /// The MMU_HEATER target for @p unit: UNIT= and the unit's gates on a
+    /// multi-unit v4, else GATES= on a multi-unit rig. Caller holds mutex_.
+    [[nodiscard]] std::string heater_suffix_locked(int unit) const;
+    /// One heater target per command: @p unit's, or for the whole machine on a
+    /// multi-unit v4, one per unit that has a heater. Locks mutex_.
+    [[nodiscard]] std::vector<std::string> heater_targets_for_unit(int unit) const;
+    /// @p command once per heater target; a failed drying start stops the
+    /// units already started.
+    AmsError send_heater_command(const std::string& command, int unit);
+    /// Toolhead / extruder-entry sensor fitted and enabled, from
+    /// printer.mmu.sensors; nullopt until a frame carries the dict. v4 refuses
+    /// the toolhead distance tuned against a sensor that is not.
+    std::optional<bool> toolhead_sensor_fitted_;
+    /// A per-gate `filament_switch_sensor mmu_entry_<N>` object (v4) has
+    /// reported; printer.mmu.sensors' aggregate `mmu_pre_gate` then adds
+    /// nothing and must not overwrite the other gates.
+    bool entry_sensor_objects_seen_{false};
+    /// Each entry sensor object's filament_detected / enabled, which arrive in
+    /// independent deltas; the gate reads triggered while both hold.
+    std::map<int, std::pair<bool, bool>> entry_sensor_objects_;
+    std::optional<bool> extruder_sensor_fitted_;
+    /// Store @p layout and the version it names. Caller holds mutex_.
+    void set_machine_layout_locked(const MachineLayout& layout);
+
     // Async callback safety guard
     helix::AsyncLifetimeGuard lifetime_;
 
@@ -479,6 +602,10 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
     /// Whether printer.mmu.has_bypass has been observed at least once, so the
     /// resolved value gets logged even when it matches our optimistic default.
     bool bypass_support_seen_{false};
+    /// Last printer.mmu.has_bypass; the bypass source on v3 only.
+    std::optional<bool> status_has_bypass_;
+    /// supports_bypass from whichever source the layout trusts. Caller holds mutex_.
+    void apply_bypass_support_locked();
 
     /// Last printer.mmu.gate_status array, raw Happy Hare values (-1 unknown,
     /// 0 empty, 1 available, 2 from_buffer). Kept because the array and the
@@ -532,6 +659,8 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
         float toolhead_ooze_reduction = 2.0f;
         int sync_to_extruder = 0;
         int clog_detection = 0;
+        /// Manual-mode clog detection length, when the config names one
+        std::optional<float> detection_length;
         bool loaded = false;
     };
     ConfigDefaults config_defaults_;
@@ -555,10 +684,17 @@ class AmsBackendHappyHare : public AmsSubscriptionBackend {
 
     // Status-backed values (from printer.mmu.* subscriptions)
     std::string led_exit_effect_;
-    std::string espooler_active_;
+    std::string espooler_active_; ///< eSpooler operation shown for the selected gate
+    /// The per-gate `espooler` list. Once a frame carries one that lines up
+    /// with the gates, the shown operation comes from here.
+    std::vector<std::string> espooler_per_gate_;
     int flowguard_encoder_mode_ = -1; ///< -1 = not yet received from Moonraker
 
     void query_config_defaults();
+    /// Read the layout and the speed/distance defaults from the connect-time
+    /// configfile and live mmu_machine, then re-apply persisted overrides.
+    void apply_config_defaults(const nlohmann::json& settings,
+                               const nlohmann::json& live_mmu_machine);
     void load_persisted_overrides();
     void save_override(const std::string& key, float value);
     void save_override(const std::string& key, int value);

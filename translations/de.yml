@@ -128,6 +128,7 @@ translations:
   Abort already in progress: Abbruch läuft bereits
   Abort failed: Abbruch fehlgeschlagen
   Aborting AFC operation...: AFC-Vorgang wird abgebrochen...
+  Aborting...: Wird abgebrochen...
   About: Info
   Accel to Decel: Beschl. zu Verzög.
   Acceleration to deceleration limit (mm/s²): Beschleunigung zu Verzögerung Limit
@@ -153,6 +154,7 @@ translations:
   Add Vendor: Hersteller hinzufügen
   Add Widget: Widget hinzufügen
   Add custom filament: Benutzerdefiniertes Filament hinzufügen
+  Add page: Seite hinzufügen
   Added to Spoolman: Zu Spoolman hinzugefügt
   Address: Adresse
   Adjust belt tension until the belt appears stationary: Riemenspannung anpassen,
@@ -662,6 +664,9 @@ translations:
   Copied to clipboard!: In Zwischenablage kopiert!
   Copy Command: Befehl kopieren
   Copy failed - use SSH manually: Kopieren fehlgeschlagen – SSH verwenden
+  Copying from USB: 'Kopieren von USB'
+  Copying from USB stopped responding: 'Kopieren von USB reagiert nicht mehr'
+  Copying from USB...: 'Kopieren von USB...'
   Corner roundness: Eckenrundung
   Correction (Ki): Korrektur (Ki)
   Could not analyze PRINT_START macro. Some print options may be unavailable.: PRINT_START-Makro
@@ -670,6 +675,7 @@ translations:
   Could not answer the connection request: 'Verbindungsanfrage konnte nicht beantwortet werden'
   ? "Could not check webcam status.\nCheck printer connection."
   : "Webcam-Status konnte nicht geprüft werden.\nDruckerverbindung prüfen."
+  'Could not copy {} from USB: {}': '{} konnte nicht von USB kopiert werden: {}'
   Could not forget device: Gerät konnte nicht vergessen werden
   Could not load printer database: Druckerdatenbank konnte nicht geladen werden
   Could not parse tips database: Tipps-Datenbank konnte nicht ausgelesen werden
@@ -759,6 +765,7 @@ translations:
   Deploy: Ausfahren
   Describe the issue (optional): Problem beschreiben (optional)
   Detailed: Detailliert
+  Detect automatically: Automatisch erkennen
   Detecting plate...: Platte erkennen...
   Detecting printer type...: Druckertyp wird erkannt...
   Detecting...: Wird erkannt...
@@ -1118,6 +1125,7 @@ translations:
   ? Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool.
   : Nach dem Entladen befindet sich noch Filament an der Düse. Schnitt oder Rückzug sind möglicherweise nicht abgeschlossen. Räumen Sie den Werkzeugkopf frei, bevor Sie eine andere Spule laden.
   'Filament load failed: {}': 'Filament laden fehlgeschlagen: {}'
+  Filament not set: 'Filament nicht gesetzt'
   Filament operation failed: Filament-Vorgang fehlgeschlagen
   Filament operation timed out: Filament-Vorgang Zeitüberschreitung
   Filament ran out - nothing at the toolhead and the print is paused.: 'Filament zu Ende - am Werkzeugkopf ist nichts mehr und der Druck ist pausiert.'
@@ -1126,6 +1134,8 @@ translations:
   Filament ran out at the toolhead: 'Filament am Werkzeugkopf zu Ende'
   Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume.: 'Filament zu Ende. Automatisches Nachfüllen ist aus, daher wechselt das CFS die Spule nicht von selbst. Filament laden und dann fortsetzen.'
   Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume.: Das Filament ist zu Ende. Das CFS weiß, welche Spulen passen, aber diese Slots sind leer. Laden Sie eine davon und setzen Sie dann fort.
+  Filament reload failed: Erneutes Laden des Filaments fehlgeschlagen
+  Filament remapping is unavailable: Filament-Neuzuordnung ist nicht verfügbar
   Filament runout: Filament aufgebraucht
   Filament runout and motion detection sensors: Filament-Auslauf- und Bewegungserkennungssensoren
   Filament runout detection status: 'Status der Filament-Endeerkennung'
@@ -1366,9 +1376,6 @@ translations:
   Install plugin: Plugin installieren
   Install script not found. Use the remote install command instead.: Installationsskript
     nicht gefunden. Verwenden Sie stattdessen den Remote-Installationsbefehl.
-  Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history.: Installieren
-    Sie das HelixPrint-Plugin in den erweiterten Einstellungen, um Filament neu zuzuordnen,
-    ohne den Druckverlauf zu beeinflussen.
   'Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:': 'Installieren
     Sie das HelixPrint-Plugin für schnelle G-Code-Modifikationen. Führen Sie diesen
     Befehl per SSH auf Ihrem Drucker aus:'
@@ -2047,6 +2054,7 @@ translations:
   Print error: Druckfehler
   Print failed: Druck fehlgeschlagen
   Print history statistics: 'Statistik des Druckverlaufs'
+  Print history will show the rewritten name: Im Druckverlauf wird der umgeschriebene Name angezeigt
   Print issue detected: Druckproblem erkannt
   'Print preparation failed: {}': 'Druckvorbereitung fehlgeschlagen: {}'
   Print progress and file selection: 'Druckfortschritt und Dateiauswahl'
@@ -2207,7 +2215,9 @@ translations:
   Recording Mode: Aufnahmemodus
   Recover: Wiederherstellen
   Recover MMU state?: MMU-Status wiederherstellen?
+  Recover State: Status wiederherstellen
   Recovering AFC system...: AFC-Wiederherstellung...
+  Recovering...: Wiederherstellung...
   Recovery failed: Wiederherstellung fehlgeschlagen
   'Recovery failed: ': 'Wiederherstellung fehlgeschlagen: '
   'Recovery failed: {}': 'Wiederherstellung fehlgeschlagen: {}'
@@ -2231,7 +2241,10 @@ translations:
   Remaining (g): Verbleibend (g)
   Remaining Weight (g): Restgewicht (g)
   Remap Tool: Werkzeug zuordnen
-  Remap needs the HelixPrint plugin: Neuzuordnung benötigt das HelixPrint-Plugin
+  ? Remapping rewrites the job file before printing it. This printer's Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally.
+  : Die Neuzuordnung schreibt die Druckdatei vor dem Drucken um. Das Moonraker dieses Druckers ist zu alt, damit das HelixPrint-Plugin den ursprünglichen Dateinamen danach wiederherstellen kann; der abgeschlossene Auftrag wird daher unter dem umgeschriebenen Namen aufgeführt. Die Neuzuordnung selbst funktioniert normal.
+  ? "Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.\n\nInstalling the plugin takes a moment and needs no restart."
+  : "Die Neuzuordnung schreibt die Druckdatei vor dem Drucken um. Ohne das HelixPrint-Plugin landet die umgeschriebene Kopie in Ihrem Druckverlauf, sodass abgeschlossene Drucke unter Namen wie modified_1730824_benchy.gcode statt unter der gewählten Datei aufgelistet werden.\n\nDie Installation des Plugins dauert einen Moment und erfordert keinen Neustart."
   Remap…: Neu zuordnen…
   Remember slot spool details across an eject: Spulendetails des Slots über ein Auswerfen hinweg merken
   Remove: Entfernen
@@ -2508,6 +2521,7 @@ translations:
     festlegen
   Set up: Einrichten
   Set up your label printer in Settings: Etikettendrucker in Einstellungen einrichten
+  Set what is really selected and loaded. Nothing moves.: Festlegen, was wirklich ausgewählt und geladen ist. Nichts bewegt sich.
   Settings: Einstellungen
   Settings Snapshot: Einstellungen-Momentaufnahme
   Settings reset to defaults. Restarting...: Einstellungen auf Standardwerte zurückgesetzt.
@@ -2566,6 +2580,8 @@ translations:
   'Slot %d: %.0fg of %.0fg needed': 'Slot %d: %.0fg von %.0fg benötigt'
   Slot 1: Slot 1
   Slot {}: Slot {}
+  ? Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print.
+  : 'Für Slot {} ist kein Filamenttyp gesetzt, daher setzt der Drucker nicht fort. Setzen Sie sein Material im Filament-Panel und setzen Sie den Druck dann fort.'
   Slot {} is blocked — manual intervention required: Slot {} ist blockiert — manueller Eingriff erforderlich
   Slot {} matches.: 'Slot {} passt.'
   Slot {} spool cleared: Slot {} Spule gelöscht
@@ -2848,6 +2864,12 @@ translations:
     starten?
   ? This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets.
   : Dieser Drucker sieht aus wie ein {} ({}% Konfidenz), ist aber als {} eingerichtet. Ein falscher Typ wendet falsche Optionen und Voreinstellungen für die Druckvorbereitung an.
+  ? This removes the plugin's Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that.
+  : Dies entfernt die Moonraker-Komponente des Plugins und startet Moonraker neu. Der Drucker wird kurz getrennt. Falls in PRINT_START noch alte Zeilen zur Phasenverfolgung vorhanden sind, werden sie ebenfalls entfernt, wobei Backups aufbewahrt werden. Ein Klipper-Neustart wendet das an.
+  This replaces the printer's helper macros with the current version and restarts Klipper.: 'Dies ersetzt die Hilfsmakros des Druckers durch die aktuelle Version und startet Klipper neu.'
+  ? This replaces the printer's helper macros with the current version. A print is running, so Klipper restarts after it finishes.
+  : 'Dies ersetzt die Hilfsmakros des Druckers durch die aktuelle Version. Ein Druck läuft, daher wird Klipper nach dessen Abschluss neu gestartet.'
+  This system does not support bypass mode: 'Dieses System unterstützt den Bypass-Modus nicht'
   This tool probes each bed screw and tells you how much to adjust.: Dieses Werkzeug
     tastet jede Bettschraube ab und zeigt Ihnen, wie viel Sie einstellen müssen.
   ? This will apply the Z-offset to your endstop and restart Klipper to save the configuration.
@@ -2992,6 +3014,7 @@ translations:
   Unload macro not configured: Entlade-Makro nicht konfiguriert
   Unload may still be running — response timed out: Entladen läuft möglicherweise
     noch — Zeitüberschreitung
+  Unloaded: Entladen
   Unloading: Entladen
   Unloading Start Speed: 'Startgeschwindigkeit beim Entladen'
   Unloading before bypass...: Entladen vor Bypass...
@@ -3261,6 +3284,7 @@ translations:
   '{} disabled': '{} deaktiviert'
   '{} enabled': '{} aktiviert'
   '{} failed: {}': '{} fehlgeschlagen: {}'
+  '{} filament': '{} Filament'
   '{} filament sensors available': '{} Filamentsensoren verfügbar'
   '{} filament • {}': '{} Filament • {}'
   '{} heater turned off': '{}-Heizung ausgeschaltet'

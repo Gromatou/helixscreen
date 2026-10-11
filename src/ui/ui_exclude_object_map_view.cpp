@@ -5,6 +5,7 @@
 #include "ui_update_queue.h"
 #include "ui_utils.h"
 
+#include "lv_draw_buf_guard.h"
 #include "lvgl/src/others/translation/lv_translation.h"
 #include "observer_factory.h"
 #include "printer_excluded_objects_state.h"
@@ -312,11 +313,9 @@ void ExcludeObjectMapView::destroy() {
         }
         canvas_ = nullptr;
 
-        // Free canvas draw buffer now that no live widget references it.
-        if (canvas_buf_) {
-            lv_draw_buf_destroy(canvas_buf_);
-            canvas_buf_ = nullptr;
-        }
+        // Free canvas draw buffer now that no live widget references it. A
+        // blend of it from the last refresh may still be in flight.
+        helix::safe_draw_buf_destroy(canvas_buf_, "exclmap");
 
         // Deferred delete: a bare lv_obj_delete(root_) here is a sync widget
         // deletion that can run inside a UpdateQueue process_pending batch
@@ -621,7 +620,9 @@ lv_obj_t* ExcludeObjectMapView::create_object_rect(lv_obj_t* parent, int index,
     snprintf(num_buf, sizeof(num_buf), "%d", index + 1);
     lv_label_set_text(num_label, num_buf);
     lv_obj_set_style_text_font(num_label, theme_manager_get_font("font_small"), 0);
-    lv_obj_set_style_text_color(num_label, lv_color_black(), 0);
+    lv_obj_set_style_text_color(
+        num_label, theme_manager_get_contrast_adjusted_text(theme_manager_get_color("text"), color),
+        0);
     lv_obj_align(num_label, LV_ALIGN_CENTER, 0, 0);
     lv_obj_remove_flag(num_label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(num_label, LV_OBJ_FLAG_EVENT_BUBBLE);

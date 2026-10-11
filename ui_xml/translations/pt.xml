@@ -120,6 +120,7 @@
   <translation tag="Abort already in progress" pt="Cancelamento já em andamento"/>
   <translation tag="Abort failed" pt="Falha ao abortar"/>
   <translation tag="Aborting AFC operation..." pt="Abortando operação AFC..."/>
+  <translation tag="Aborting..." pt="Abortando..."/>
   <translation tag="About" pt="Sobre"/>
   <translation tag="Accel to Decel" pt="Aceleração para Desaceleração"/>
   <translation tag="Acceleration to deceleration limit (mm/s²)" pt="Limite de aceleração para desaceleração (mm/s²)"/>
@@ -143,6 +144,7 @@
   <translation tag="Add Vendor" pt="Adicionar Fornecedor"/>
   <translation tag="Add Widget" pt="Adicionar Widget"/>
   <translation tag="Add custom filament" pt="Adicionar filamento personalizado"/>
+  <translation tag="Add page" pt="Adicionar página"/>
   <translation tag="Added to Spoolman" pt="Adicionado ao Spoolman"/>
   <translation tag="Address" pt="Endereço"/>
   <translation tag="Adjust belt tension until the belt appears stationary" pt="Ajuste a tensão da correia até que ela pareça parada"/>
@@ -578,11 +580,15 @@
   <translation tag="Copied to clipboard!" pt="Copiado para a área de transferência!"/>
   <translation tag="Copy Command" pt="Copiar Comando"/>
   <translation tag="Copy failed - use SSH manually" pt="Falha ao copiar - use SSH manualmente"/>
+  <translation tag="Copying from USB" pt="Copiando do USB"/>
+  <translation tag="Copying from USB stopped responding" pt="A cópia do USB parou de responder"/>
+  <translation tag="Copying from USB..." pt="Copiando do USB..."/>
   <translation tag="Corner roundness" pt="Arredondamento dos cantos"/>
   <translation tag="Correction (Ki)" pt="Correção (Ki)"/>
   <translation tag="Could not analyze PRINT_START macro. Some print options may be unavailable." pt="Não foi possível analisar a macro PRINT_START. Algumas opções de impressão podem estar indisponíveis."/>
   <translation tag="Could not answer the connection request" pt="Não foi possível responder à solicitação de conexão"/>
   <translation tag="Could not check webcam status.&#10;Check printer connection." pt="Não foi possível verificar status da webcam.&#10;Verifique a conexão da impressora."/>
+  <translation tag="Could not copy {} from USB: {}" pt="Não foi possível copiar {} do USB: {}"/>
   <translation tag="Could not forget device" pt="Não foi possível esquecer o dispositivo"/>
   <translation tag="Could not load printer database" pt="Não foi possível carregar o banco de dados de impressoras"/>
   <translation tag="Could not parse tips database" pt="Não foi possível analisar o banco de dados de dicas"/>
@@ -669,6 +675,7 @@
   <translation tag="Deploy" pt="Implantar"/>
   <translation tag="Describe the issue (optional)" pt="Descreva o problema (opcional)"/>
   <translation tag="Detailed" pt="Detalhado"/>
+  <translation tag="Detect automatically" pt="Detectar automaticamente"/>
   <translation tag="Detecting plate..." pt="Detectando placa..."/>
   <translation tag="Detecting printer type..." pt="Detectando tipo de impressora..."/>
   <translation tag="Detecting..." pt="Detectando..."/>
@@ -993,6 +1000,7 @@
   <translation tag="Filament is pulling tight" pt="O filamento está puxando com tensão"/>
   <translation tag="Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool." pt="O filamento ainda está no bico após o descarregamento. O corte ou a retração pode não ter sido concluído. Limpe o cabeçote antes de carregar outro carretel."/>
   <translation tag="Filament load failed: {}" pt="Falha ao carregar filamento: {}"/>
+  <translation tag="Filament not set" pt="Filamento não definido"/>
   <translation tag="Filament operation failed" pt="Falha na operação de filamento"/>
   <translation tag="Filament operation timed out" pt="Operação de filamento — tempo esgotado"/>
   <translation tag="Filament ran out - nothing at the toolhead and the print is paused." pt="O filamento acabou - não há nada no cabeçote e a impressão está pausada."/>
@@ -1000,6 +1008,8 @@
   <translation tag="Filament ran out at the toolhead" pt="O filamento acabou no cabeçote"/>
   <translation tag="Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume." pt="O filamento acabou. O reabastecimento automático está desligado, então o CFS não trocará de carretel sozinho. Carregue filamento e retome."/>
   <translation tag="Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume." pt="O filamento acabou. O CFS sabe quais carretéis correspondem, mas esses slots estão vazios. Carregue um deles e depois retome."/>
+  <translation tag="Filament reload failed" pt="Falha ao recarregar o filamento"/>
+  <translation tag="Filament remapping is unavailable" pt="O remapeamento de filamento está indisponível"/>
   <translation tag="Filament runout" pt="Fim de filamento"/>
   <translation tag="Filament runout and motion detection sensors" pt="Sensores de detecção de fim de filamento e movimento"/>
   <translation tag="Filament runout detection status" pt="Status da detecção de fim de filamento"/>
@@ -1213,7 +1223,6 @@
   <translation tag="Install Update" pt="Instalar Atualização"/>
   <translation tag="Install plugin" pt="Instalar plugin"/>
   <translation tag="Install script not found. Use the remote install command instead." pt="Script de instalação não encontrado. Use o comando de instalação remota."/>
-  <translation tag="Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history." pt="Instale o plugin HelixPrint nas configurações Avançadas para remapear o filamento sem afetar o histórico de impressão."/>
   <translation tag="Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:" pt="Instale o plugin HelixPrint para habilitar modificações rápidas de G-code. Execute este comando via SSH na sua impressora:"/>
   <translation tag="Install the timelapse plugin via SSH,&#10;then tap &quot;Check Again&quot;." pt="Instale o plugin de timelapse via SSH,&#10;depois toque em &quot;Verificar novamente&quot;."/>
   <translation tag="Install timelapse plugin" pt="Instalar plugin de timelapse"/>
@@ -1833,6 +1842,7 @@
   <translation tag="Print error" pt="Erro de impressão"/>
   <translation tag="Print failed" pt="Impressão falhou"/>
   <translation tag="Print history statistics" pt="Estatísticas do histórico de impressão"/>
+  <translation tag="Print history will show the rewritten name" pt="O histórico de impressões mostrará o nome reescrito"/>
   <translation tag="Print issue detected" pt="Problema de impressão detectado"/>
   <translation tag="Print preparation failed: {}" pt="Falha na preparação da impressão: {}"/>
   <translation tag="Print progress and file selection" pt="Progresso da impressão e seleção de arquivos"/>
@@ -1976,7 +1986,9 @@
   <translation tag="Recording Mode" pt="Modo de Gravação"/>
   <translation tag="Recover" pt="Recuperar"/>
   <translation tag="Recover MMU state?" pt="Recuperar estado do MMU?"/>
+  <translation tag="Recover State" pt="Recuperar estado"/>
   <translation tag="Recovering AFC system..." pt="Recuperando sistema AFC..."/>
+  <translation tag="Recovering..." pt="Recuperando..."/>
   <translation tag="Recovery failed" pt="Recuperação falhou"/>
   <translation tag="Recovery failed: " pt="A recuperação falhou: "/>
   <translation tag="Recovery failed: {}" pt="A recuperação falhou: {}"/>
@@ -1997,7 +2009,8 @@
   <translation tag="Remaining (g)" pt="Restante (g)"/>
   <translation tag="Remaining Weight (g)" pt="Peso Restante (g)"/>
   <translation tag="Remap Tool" pt="Remapear Ferramenta"/>
-  <translation tag="Remap needs the HelixPrint plugin" pt="O remapeamento precisa do plugin HelixPrint"/>
+  <translation tag="Remapping rewrites the job file before printing it. This printer&apos;s Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally." pt="O remapeamento reescreve o arquivo de trabalho antes de imprimi-lo. O Moonraker desta impressora é antigo demais para o plugin HelixPrint restaurar o nome do arquivo original depois, então o trabalho concluído aparece com o nome reescrito. O remapeamento em si funciona normalmente."/>
+  <translation tag="Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.&#10;&#10;Installing the plugin takes a moment and needs no restart." pt="O remapeamento reescreve o arquivo de trabalho antes de imprimi-lo. Sem o plugin HelixPrint, a cópia reescrita é o que entra no seu histórico de impressões, então os trabalhos concluídos aparecem com nomes como modified_1730824_benchy.gcode em vez do arquivo escolhido.&#10;&#10;Instalar o plugin leva um momento e não exige reinicialização."/>
   <translation tag="Remap…" pt="Remapear…"/>
   <translation tag="Remember slot spool details across an eject" pt="Lembrar os detalhes do carretel do slot ao ejetar"/>
   <translation tag="Remove" pt="Remover"/>
@@ -2240,6 +2253,7 @@
   <translation tag="Set logging verbosity for troubleshooting" pt="Definir nível de detalhe do log para solução de problemas"/>
   <translation tag="Set up" pt="Configurar"/>
   <translation tag="Set up your label printer in Settings" pt="Configure sua impressora de etiquetas em Configurações"/>
+  <translation tag="Set what is really selected and loaded. Nothing moves." pt="Defina o que está realmente selecionado e carregado. Nada se move."/>
   <translation tag="Settings" pt="Configurações"/>
   <translation tag="Settings Snapshot" pt="Captura de Configurações"/>
   <translation tag="Settings reset to defaults. Restarting..." pt="Configurações restauradas para os padrões. Reiniciando..."/>
@@ -2290,6 +2304,7 @@
   <translation tag="Slot %d: %.0fg of %.0fg needed" pt="Slot %d: %.0fg de %.0fg necessários"/>
   <translation tag="Slot 1" pt="Slot 1"/>
   <translation tag="Slot {}" pt="Slot {}"/>
+  <translation tag="Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print." pt="O slot {} não tem tipo de filamento definido, então a impressora não vai retomar. Defina o material dele no painel de filamento e retome a impressão."/>
   <translation tag="Slot {} is blocked — manual intervention required" pt="Slot {} está bloqueado — intervenção manual necessária"/>
   <translation tag="Slot {} matches." pt="O slot {} corresponde."/>
   <translation tag="Slot {} spool cleared" pt="Bobina do slot {} removida"/>
@@ -2512,6 +2527,10 @@
   <translation tag="This plugin lets HelixScreen control print start options like bed mesh and QGL. Once installed, use Configure PRINT_START below to enable optional steps." pt="Este plugin permite que o HelixScreen controle opções de início de impressão como malha da mesa e QGL. Após instalado, use Configurar PRINT_START abaixo para habilitar etapas opcionais."/>
   <translation tag="This print needs about %.0fg but the spool has about %.0fg remaining. Start anyway?" pt="Esta impressão precisa de cerca de %.0fg, mas o carretel tem cerca de %.0fg restantes. Iniciar mesmo assim?"/>
   <translation tag="This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets." pt="Esta impressora parece ser uma {} ({}% de confiança), mas está configurada como {}. Um tipo errado aplica opções de pré-impressão e predefinições incorretas."/>
+  <translation tag="This removes the plugin&apos;s Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that." pt="Isso remove o componente do Moonraker do plugin e reinicia o Moonraker. A impressora será brevemente desconectada. Se ainda houver linhas antigas de rastreamento de fase no PRINT_START, elas também são removidas, mantendo os backups. Um reinício do Klipper aplica isso."/>
+  <translation tag="This replaces the printer&apos;s helper macros with the current version and restarts Klipper." pt="Isto substitui as macros de ajuda da impressora pela versão atual e reinicia o Klipper."/>
+  <translation tag="This replaces the printer&apos;s helper macros with the current version. A print is running, so Klipper restarts after it finishes." pt="Isto substitui as macros de ajuda da impressora pela versão atual. Uma impressão está em andamento, então o Klipper será reiniciado ao término."/>
+  <translation tag="This system does not support bypass mode" pt="Este sistema não oferece suporte ao modo bypass"/>
   <translation tag="This tool probes each bed screw and tells you how much to adjust." pt="Esta ferramenta sonda cada parafuso da mesa e informa quanto ajustar."/>
   <translation tag="This will apply the Z-offset to your endstop and restart Klipper to save the configuration. The printer will briefly disconnect." pt="Isso aplicará o Z-offset ao seu endstop e reiniciará o Klipper para salvar a configuração. A impressora será brevemente desconectada."/>
   <translation tag="This will apply the Z-offset to your probe and restart Klipper to save the configuration. The printer will briefly disconnect." pt="Isso aplicará o Z-offset à sua sonda e reiniciará o Klipper para salvar a configuração. A impressora será brevemente desconectada."/>
@@ -2629,6 +2648,7 @@
   <translation tag="Unload filament" pt="Descarregar filamento"/>
   <translation tag="Unload macro not configured" pt="Macro de descarga não configurado"/>
   <translation tag="Unload may still be running — response timed out" pt="A descarga pode ainda estar em execução — tempo esgotado"/>
+  <translation tag="Unloaded" pt="Descarregado"/>
   <translation tag="Unloading" pt="Descarregando"/>
   <translation tag="Unloading Start Speed" pt="Velocidade inicial de descarregamento"/>
   <translation tag="Unloading before bypass..." pt="Descarregando antes do bypass..."/>
@@ -2854,6 +2874,7 @@
   <translation tag="{} disabled" pt="{} desabilitado"/>
   <translation tag="{} enabled" pt="{} habilitado"/>
   <translation tag="{} failed: {}" pt="{} falhou: {}"/>
+  <translation tag="{} filament" pt="{} de filamento"/>
   <translation tag="{} filament sensors available" pt="{} sensores de filamento disponíveis"/>
   <translation tag="{} filament • {}" pt="{} de filamento • {}"/>
   <translation tag="{} heater turned off" pt="Aquecedor {} desligado"/>

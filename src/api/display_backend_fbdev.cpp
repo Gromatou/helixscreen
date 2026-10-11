@@ -301,6 +301,9 @@ lv_indev_t* DisplayBackendFbdev::create_input_pointer() {
     // Hoisted alongside them so the touch diagnostics below can record whether the
     // declared range came from the MT axes rather than ABS_X/ABS_Y.
     bool used_mt_fallback = false;
+    // The declared range is the display transposed, and the display size is
+    // programmed in its place until samples say otherwise.
+    bool transposed_guess = false;
     if (has_abs) {
         int fd = open(touch_path.c_str(), O_RDONLY | O_CLOEXEC);
         if (fd >= 0) {
@@ -347,6 +350,21 @@ lv_indev_t* DisplayBackendFbdev::create_input_pointer() {
                     spdlog::warn("[Fbdev Backend] ABS range is zero — LVGL cannot map "
                                  "coordinates to display ({}x{}), forcing calibration",
                                  screen_width_, screen_height_);
+                } else if (!needs_calibration_ &&
+                           helix::has_transposed_abs_range(abs_x.maximum, abs_y.maximum,
+                                                           screen_width_, screen_height_)) {
+                    // The advertised range is the display's own dimensions with the
+                    // axes swapped, while the coordinates the driver emits span the
+                    // framebuffer the normal way round. Scaling by the advertised
+                    // range compresses one axis and clamps the other, and no affine
+                    // can un-clamp it, so scale by the display size and leave
+                    // rotation to LVGL. The HELIX_TOUCH_MIN_X/MAX_X/MIN_Y/MAX_Y
+                    // override below still replaces this when it is set.
+                    lv_evdev_set_calibration(touch_, 0, 0, screen_width_, screen_height_);
+                    transposed_guess = true;
+                    spdlog::info("[Fbdev Backend] ABS range ({},{}) is the display ({}x{}) "
+                                 "transposed — scaling touch by the display size",
+                                 abs_x.maximum, abs_y.maximum, screen_width_, screen_height_);
                 } else if (!needs_calibration_ &&
                            helix::has_abs_display_mismatch(abs_x.maximum, abs_y.maximum,
                                                            screen_width_, screen_height_)) {
@@ -404,41 +422,36 @@ lv_indev_t* DisplayBackendFbdev::create_input_pointer() {
     const bool env_range_override = env_min_x && env_max_x && env_min_y && env_max_y;
     const bool env_swap_override = swap_axes != nullptr;
     const helix::TouchRangeSettings stored_range = helix::load_touch_range();
+    // Asked of the display, not of `/display/rotate`: the key is only the request,
+    // and it differs from the applied rotation both ways (CLI/env rotation with no
+    // key; a failed DRM->fbdev rotation fallback leaving the key set on an
+    // unrotated display). This runs from create_input_pointer(), which
+    // DisplayManager calls after it applies rotation, so the display is already at
+    // its final rotation.
+    const int applied_rotation = display_rotation_degrees();
+    const bool stored_applies = helix::stored_touch_range_applies(stored_range, applied_rotation);
     if (env_range_override) {
         spdlog::info("[Fbdev Backend] Touch range source: environment override{}",
                      stored_range.valid ? " (stored calibration range ignored)" : "");
-    } else if (stored_range.valid) {
-        // A stored range solved on a rotated panel folds the rotation into
-        // (min,max,swap) and double-applies it at runtime
-        // (prestonbrown/helixscreen#1394). The range stage post-dates the
-        // rotation-blind solver by days, so any stored range on a rotated
-        // display is from the broken window: ignore it and ride the
-        // affine-only path. Asked of the display, not of `/display/rotate`,
-        // and via the same helper the calibration solver gates on - the key
-        // is only the request, and it differs from the applied rotation both
-        // ways (CLI/env rotation with no key; a failed DRM->fbdev rotation
-        // fallback leaving the key set on an unrotated display). This runs
-        // from create_input_pointer(), which DisplayManager calls after it
-        // applies rotation, so the display is already at its final rotation.
-        const int applied_rotation = display_rotation_degrees();
-        if (applied_rotation != 0) {
-            spdlog::warn("[Fbdev Backend] Ignoring stored touch range on a {}°-rotated display"
-                         " - solved through the rotation, affine-only path applies",
-                         applied_rotation);
-        } else {
-            if (!env_swap_override) {
-                lv_evdev_set_swap_axes(touch_, stored_range.swap_axes);
-            }
-            lv_evdev_set_calibration(touch_, stored_range.min_x, stored_range.min_y,
-                                     stored_range.max_x, stored_range.max_y);
-            spdlog::info("[Fbdev Backend] Touch range source: stored calibration "
-                         "X({}..{}) Y({}..{}) swap={}{}",
-                         stored_range.min_x, stored_range.max_x, stored_range.min_y,
-                         stored_range.max_y, stored_range.swap_axes,
-                         env_swap_override ? " (swap held by environment override)" : "");
+    } else if (stored_applies) {
+        if (!env_swap_override) {
+            lv_evdev_set_swap_axes(touch_, stored_range.swap_axes);
         }
+        lv_evdev_set_calibration(touch_, stored_range.min_x, stored_range.min_y, stored_range.max_x,
+                                 stored_range.max_y);
+        spdlog::info("[Fbdev Backend] Touch range source: stored calibration "
+                     "X({}..{}) Y({}..{}) swap={} rotation={}{}",
+                     stored_range.min_x, stored_range.max_x, stored_range.min_y, stored_range.max_y,
+                     stored_range.swap_axes, stored_range.capture_rotation,
+                     env_swap_override ? " (swap held by environment override)" : "");
+    } else if (stored_range.valid) {
+        spdlog::warn("[Fbdev Backend] Ignoring stored touch range on a {}°-rotated display"
+                     " - not stamped as solved unrotated (rotation={}), affine-only path applies",
+                     applied_rotation, stored_range.capture_rotation);
     } else {
-        spdlog::info("[Fbdev Backend] Touch range source: kernel/MT-declared ABS range");
+        spdlog::info("[Fbdev Backend] Touch range source: {}",
+                     transposed_guess ? "display size (declared range is the display transposed)"
+                                      : "kernel/MT-declared ABS range");
     }
 
     // Load affine calibration from config (saved by calibration wizard)
@@ -489,6 +502,15 @@ lv_indev_t* DisplayBackendFbdev::create_input_pointer() {
     calibration_context_.raw_source = [raw_indev](int& x, int& y) {
         return lv_evdev_get_last_raw(raw_indev, &x, &y);
     };
+    // Only the transposed guess is ever re-programmed from samples: touches past
+    // the display edge, within the declared range, disprove it.
+    const bool display_size_live = transposed_guess && !env_range_override && !stored_applies;
+    if (display_size_live) {
+        calibration_context_.reprogram_range = [raw_indev](int min_x, int min_y, int max_x,
+                                                           int max_y) {
+            lv_evdev_set_calibration(raw_indev, min_x, min_y, max_x, max_y);
+        };
+    }
 
     // Always install the calibrated read callback — it handles both rotation
     // transform and affine calibration independently. Without this, rotation
@@ -518,7 +540,7 @@ lv_indev_t* DisplayBackendFbdev::create_input_pointer() {
         // Mirrors the swap decision above: an environment variable that is present
         // at all holds the swap, even when it says 0.
         pipeline.swap_axes = env_swap_override ? (strcmp(swap_axes, "1") == 0)
-                                               : (stored_range.valid && stored_range.swap_axes);
+                                               : (stored_applies && stored_range.swap_axes);
         if (env_range_override) {
             pipeline.source = helix::TouchRangeSource::Environment;
             pipeline.configured_valid = true;
@@ -526,13 +548,20 @@ lv_indev_t* DisplayBackendFbdev::create_input_pointer() {
             pipeline.max_x = std::atoi(env_max_x);
             pipeline.min_y = std::atoi(env_min_y);
             pipeline.max_y = std::atoi(env_max_y);
-        } else if (stored_range.valid) {
+        } else if (stored_applies) {
             pipeline.source = helix::TouchRangeSource::Stored;
             pipeline.configured_valid = true;
             pipeline.min_x = stored_range.min_x;
             pipeline.max_x = stored_range.max_x;
             pipeline.min_y = stored_range.min_y;
             pipeline.max_y = stored_range.max_y;
+        } else if (display_size_live) {
+            pipeline.source = helix::TouchRangeSource::DisplaySize;
+            pipeline.configured_valid = true;
+            pipeline.min_x = 0;
+            pipeline.max_x = screen_width_;
+            pipeline.min_y = 0;
+            pipeline.max_y = screen_height_;
         } else {
             // lv_evdev runs its own EVIOCGABS on open, so the effective range is
             // the declared one. When our query failed we do not know what it

@@ -365,7 +365,37 @@ inline void safe_delete_subtree(lv_obj_t* obj) {
     // Free the whole condemned subtree (incl. obj and its descendants) off-tree
     // on the deferred path — escapes the UpdateQueue batch.
     helix::ui::defocus_tree(condemned);
+    if (StaticPanelRegistry::is_destroying_all()) {
+        // Inside the destroy_all() window the deferred delete silently skips,
+        // which would strand the whole subtree on layer_top for the rest of
+        // the session. Hand the condemned container to the registry instead:
+        // destroy_all()'s caller frees it once the window closes, with the
+        // subtree still inside this layout-less container (#983 guarantees
+        // hold until the delete). No-op outside the window.
+        StaticPanelRegistry::instance().record_orphaned_widget(condemned);
+        return;
+    }
     helix::ui::safe_delete_deferred(condemned);
+}
+
+/**
+ * @brief Destroy every StaticPanelRegistry panel, then free the overlay
+ *        widgets the panel destructors had to leave allocated
+ *
+ * destroy_all() forbids widget deletion inside its window (LV_EVENT_DELETE
+ * would fire into the half-destroyed panel set), so an OverlayBase whose root
+ * is still allocated records it with the registry instead of deleting it. This
+ * wrapper runs the destroy and frees what was handed back - the soft-restart
+ * (printer switch) teardown spelling of destroy_all().
+ *
+ * Full shutdown must NOT use this: it calls StaticPanelRegistry::destroy_all()
+ * directly, ignores the recorded roots, and lets lv_deinit() free every widget
+ * - deleting them mid-shutdown reopens the crash window the skip exists for.
+ */
+inline void destroy_static_panels() {
+    for (lv_obj_t* orphan_root : StaticPanelRegistry::instance().destroy_all()) {
+        safe_delete_deferred_raw(orphan_root);
+    }
 }
 
 // ============================================================================

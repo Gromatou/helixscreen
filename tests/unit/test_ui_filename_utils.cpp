@@ -8,6 +8,7 @@
 #include "../catch_amalgamated.hpp"
 
 using helix::gcode::is_native_3mf_shadow;
+using helix::gcode::qidi_3mf_extract_name;
 using helix::gcode::resolve_gcode_filename;
 using helix::gcode::thumbnail_source_describes;
 
@@ -21,6 +22,16 @@ TEST_CASE("is_native_3mf_shadow() accepts valid shadow names", "[filename_utils]
     REQUIRE(is_native_3mf_shadow("shadow_native_plate_007.gcode"));
     // Plate id need not be numeric - any non-empty middle is accepted.
     REQUIRE(is_native_3mf_shadow("shadow_native_plate_A.gcode"));
+}
+
+TEST_CASE("qidi_3mf_extract_name() names the plate G-code QIDI extracts into .temp",
+          "[filename_utils][qidi]") {
+    CHECK(qidi_3mf_extract_name("Benchy.gcode.3mf") == "Benchy.gcode");
+    CHECK(qidi_3mf_extract_name("sub/dir/Benchy.gcode.3mf") == "Benchy.gcode");
+    CHECK(qidi_3mf_extract_name("Benchy.3mf") == "Benchy.gcode");
+    // QIDI tests the inner ".gcode" case-sensitively and so appends one to
+    // an upper-case name.
+    CHECK(qidi_3mf_extract_name("X.GCODE.3MF") == "X.GCODE.gcode");
 }
 
 TEST_CASE("is_native_3mf_shadow() requires a non-empty plate id", "[filename_utils][qidi]") {
@@ -148,4 +159,39 @@ TEST_CASE("thumbnail_source_describes() rejects an unrelated print", "[filename_
     // never registers that a new print began.
     CHECK_FALSE(thumbnail_source_describes("printB.gcode", "printA.gcode"));
     CHECK_FALSE(thumbnail_source_describes("dir/printB.gcode", "other/printA.gcode"));
+}
+
+TEST_CASE("is_3mf() matches a .3mf suffix in any case", "[filename_utils][qidi_3mf]") {
+    using helix::gcode::is_3mf;
+    CHECK(is_3mf("Foo (PETG).gcode.3mf"));
+    CHECK(is_3mf("dir/Model.3MF"));
+    CHECK(is_3mf(".3mf"));
+    CHECK_FALSE(is_3mf("Foo.gcode"));
+    CHECK_FALSE(is_3mf("shadow_native_plate_1.gcode"));
+    CHECK_FALSE(is_3mf("3mf"));
+    CHECK_FALSE(is_3mf("foo3mf"));
+    CHECK_FALSE(is_3mf("Foo.3mf.gcode"));
+    CHECK_FALSE(is_3mf(""));
+}
+
+TEST_CASE("strip_gcode_extension() removes a whole .gcode.3mf", "[filename_utils][qidi_3mf]") {
+    using helix::gcode::get_display_filename;
+    using helix::gcode::strip_gcode_extension;
+    CHECK(strip_gcode_extension("Foo (PETG).gcode.3mf") == "Foo (PETG)");
+    CHECK(strip_gcode_extension("Foo.GCODE.3MF") == "Foo");
+    CHECK(strip_gcode_extension("Foo.gco.3mf") == "Foo");
+    CHECK(strip_gcode_extension("Model.3mf") == "Model");
+    CHECK(strip_gcode_extension("Model.3mf.3mf") == "Model.3mf");
+    CHECK(strip_gcode_extension(".3mf") == ".3mf");
+    CHECK(strip_gcode_extension("Foo.gcode") == "Foo");
+    CHECK(get_display_filename("dir/Foo (PETG).gcode.3mf") == "Foo (PETG)");
+}
+
+TEST_CASE("ends_with_ci() compares a suffix case-insensitively", "[filename_utils][qidi_3mf]") {
+    using helix::gcode::ends_with_ci;
+    CHECK(ends_with_ci("Foo.GCode", ".gcode"));
+    CHECK(ends_with_ci(".gcode", ".gcode"));
+    CHECK_FALSE(ends_with_ci("gcode", ".gcode"));
+    CHECK_FALSE(ends_with_ci("Foo.gcod", ".gcode"));
+    CHECK(ends_with_ci("anything", ""));
 }

@@ -1086,6 +1086,11 @@ HELIX_HAS_BELT_TUNER ?= 1
 # high-DPI UI scale factor reaches them, so a platform with a fixed panel and no
 # scale factor above 1.0 neither packs nor links those faces.
 HELIX_HAS_HIDPI_FONTS ?= 1
+# Lowest raw backlight level the panel renders visibly, as a percent of the raw
+# range. Nonzero percent scales across [floor, max] so the dimmest slider level
+# is the darkest visible level instead of black. settings.json's
+# /display/backlight_floor_percent overrides it per panel.
+HELIX_BACKLIGHT_FLOOR_PERCENT ?= 0
 CXXFLAGS += -DHELIX_HAS_LABEL_PRINTER=$(HELIX_HAS_LABEL_PRINTER) \
             -DHELIX_HAS_CFS=$(HELIX_HAS_CFS) \
             -DHELIX_HAS_IFS=$(HELIX_HAS_IFS) \
@@ -1097,7 +1102,8 @@ CXXFLAGS += -DHELIX_HAS_LABEL_PRINTER=$(HELIX_HAS_LABEL_PRINTER) \
             -DHELIX_HAS_PLUGINS=$(HELIX_HAS_PLUGINS) \
             -DHELIX_HAS_TIMELAPSE_VIEWER=$(HELIX_HAS_TIMELAPSE_VIEWER) \
             -DHELIX_HAS_BELT_TUNER=$(HELIX_HAS_BELT_TUNER) \
-            -DHELIX_HAS_HIDPI_FONTS=$(HELIX_HAS_HIDPI_FONTS)
+            -DHELIX_HAS_HIDPI_FONTS=$(HELIX_HAS_HIDPI_FONTS) \
+            -DHELIX_BACKLIGHT_FLOOR_PERCENT=$(HELIX_BACKLIGHT_FLOOR_PERCENT)
 
 # Parallel build control
 # Auto-parallelizes builds: plain 'make' automatically uses -j$(NPROC).

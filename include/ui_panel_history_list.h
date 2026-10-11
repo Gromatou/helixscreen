@@ -76,6 +76,19 @@ enum class HistorySortDirection {
     ASC   ///< Ascending (oldest first, shortest first, A-Z)
 };
 
+namespace helix {
+
+/**
+ * @brief Whether @p a sorts before @p b in the history list
+ *
+ * A strict weak ordering in both directions, as std::sort requires: equal keys
+ * never sort before each other.
+ */
+[[nodiscard]] bool history_sort_before(const PrintHistoryJob& a, const PrintHistoryJob& b,
+                                       HistorySortColumn column, HistorySortDirection direction);
+
+} // namespace helix
+
 /**
  * @brief Status filter options (maps to dropdown indices)
  */
@@ -390,14 +403,6 @@ class HistoryListPanel : public OverlayBase {
      * @return Hex color string (e.g., "#00C853")
      */
     static const char* get_status_color(PrintJobStatus status);
-
-    /**
-     * @brief Get display text for a job status
-     *
-     * @param status Job status enum
-     * @return Display string (e.g., "Completed", "Failed")
-     */
-    static const char* get_status_text(PrintJobStatus status);
 
     //
     // === Click Handlers ===

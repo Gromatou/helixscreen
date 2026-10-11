@@ -253,7 +253,14 @@ else ifeq ($(PLATFORM_TARGET),ad5m)
     # -static: Fully static binary - no runtime dependencies on system libs
     # This avoids glibc version mismatch (binary needs 2.33, system has 2.25)
     # -lstdc++fs: Required for std::experimental::filesystem on GCC 10.x
-    TARGET_LDFLAGS := -Wl,--gc-sections -flto -static -lstdc++fs
+    # -u pthread_join/-u pthread_detach: libstdc++'s thread.o references both
+    # weakly, and ld does not extract an archive member to satisfy a weak
+    # undefined symbol. Without a strong reference they stay unresolved, ld
+    # rewrites each call site to nop.w, and std::thread::join()/detach() fall
+    # through to __throw_system_error carrying the pthread_t handle as the
+    # error code instead of joining. Listing -lpthread does not prevent this.
+    TARGET_LDFLAGS := -Wl,--gc-sections -flto -static -lstdc++fs \
+                      -Wl,-u,pthread_join -Wl,-u,pthread_detach
     # SSL enabled for HTTPS/WSS support with Moonraker
     ENABLE_SSL := yes
     DISPLAY_BACKEND := fbdev
@@ -379,7 +386,14 @@ else ifeq ($(PLATFORM_TARGET),cc1)
     # -static: Fully static binary - no runtime dependencies on system libs
     # This avoids glibc version mismatch (binary needs 2.33, system has 2.23)
     # -lstdc++fs: Required for std::experimental::filesystem on GCC 10.x
-    TARGET_LDFLAGS := -Wl,--gc-sections -flto -static -lstdc++fs
+    # -u pthread_join/-u pthread_detach: libstdc++'s thread.o references both
+    # weakly, and ld does not extract an archive member to satisfy a weak
+    # undefined symbol. Without a strong reference they stay unresolved, ld
+    # rewrites each call site to nop.w, and std::thread::join()/detach() fall
+    # through to __throw_system_error carrying the pthread_t handle as the
+    # error code instead of joining. Listing -lpthread does not prevent this.
+    TARGET_LDFLAGS := -Wl,--gc-sections -flto -static -lstdc++fs \
+                      -Wl,-u,pthread_join -Wl,-u,pthread_detach
     # SSL enabled for HTTPS/WSS support with Moonraker
     ENABLE_SSL := yes
     DISPLAY_BACKEND := fbdev
@@ -533,6 +547,9 @@ else ifeq ($(PLATFORM_TARGET),k2)
     HELIX_HAS_ACE := 0
     HELIX_HAS_QIDI := 0
     HELIX_HAS_SNAPMAKER := 0
+    # The panel renders anything under ~20% of the PWM range as off, so the
+    # brightness slider and dim level must never land there (#1709).
+    HELIX_BACKLIGHT_FLOOR_PERCENT := 20
     TARGET_LDFLAGS := -Wl,--gc-sections -Wl,-O2 -Wl,--as-needed -flto=auto -static
     # HTTPS is required for the update check, R2 self-update download, telemetry,
     # and crash/debug-bundle upload. (Local Moonraker is plain HTTP and works
@@ -703,6 +720,18 @@ else ifeq ($(PLATFORM_TARGET),native)
 
 else
     $(error Unknown PLATFORM_TARGET: $(PLATFORM_TARGET). Valid options: native, pi, pi32, x86, ad5m, ad5m-br, cc1, mips, k1, ad5x, k1-dynamic, k2, snapmaker-u1, yocto)
+endif
+
+# pi32 compiles against Debian armhf (armv7) headers, whose shared_ptr uses the
+# atomic lock policy. Raspberry Pi OS 32-bit is Raspbian, built for armv6, whose
+# libstdc++.so.6 uses the mutex policy: a control block 24 bytes larger, with the
+# refcount at a different offset. Every refcount the app inlines on an object the
+# shared library owns (a std::filesystem::directory_iterator, for one) then lands
+# on the wrong word, and on freed memory once the library drops it - glibc's
+# "malloc(): unsorted double linked list corrupted" (#1732). Carrying our own
+# libstdc++ makes the inlined code and the library one build.
+ifneq ($(filter pi32 pi32-fbdev pi32-both,$(PLATFORM_TARGET)),)
+    TARGET_LDFLAGS += -static-libstdc++ -static-libgcc
 endif
 
 # =============================================================================
@@ -1573,7 +1602,7 @@ DEPLOY_RSYNC_FLAGS := -avzz --delete --checksum
 # target's real state with dev-machine state — or worse, leaves a stale
 # crash_report.txt on a healthy device that triggers the "previously crashed"
 # modal on next boot. These are gitignored but gitignore doesn't affect rsync.
-DEPLOY_RUNTIME_EXCLUDES := --exclude='crash.txt' --exclude='crash_*.txt' --exclude='crash_report.txt' --exclude='.crash_restart_count' --exclude='telemetry_*.json' --exclude='tool_spools.json' --exclude='filament_slot_overrides.json'
+DEPLOY_RUNTIME_EXCLUDES := --exclude='crash.txt' --exclude='crash_*.txt' --exclude='crash_report.txt' --exclude='.crash_restart_count' --exclude='telemetry_*.json' --exclude='tool_spools.json' --exclude='filament_slot_overrides.json' --exclude='user_filaments.json' --exclude='crash_history.json' --exclude='.helix-screen.lock'
 DEPLOY_ASSET_EXCLUDES := --exclude='test_gcodes' --exclude='gcode' --exclude='.DS_Store' --exclude='*.pyc' --exclude='settings*.json' --exclude='helixconfig*.json' --exclude='helixscreen.env' --exclude='.claude-recall' --exclude='._*' \
 	--exclude='assets/fonts/*.c' --exclude='assets/fonts/*.ttf' --exclude='assets/fonts/*.otf' --exclude='assets/fonts/.clang-format' \
 	--exclude='*.icns' --exclude='mdi-icon-metadata.json.gz' --exclude='moonraker-plugin/tests' \
@@ -2730,15 +2759,17 @@ endef
 # Personal config (settings.json, helixconfig*.json) is handled per-target
 # because some targets ship a curated default. This list is for things that
 # get auto-generated at runtime and have no business in a public release.
-# Keep in sync with DEPLOY_RUNTIME_EXCLUDES (~ line 1388).
+# tests/shell/test_runtime_file_lists.bats checks this against DEPLOY_RUNTIME_EXCLUDES
+# and the other runtime-file lists.
 define release-strip-pii
 	@rm -f $(1)/config/telemetry_device.json \
 	       $(1)/config/telemetry_queue.json \
 	       $(1)/config/tool_spools.json \
 	       $(1)/config/filament_slot_overrides.json \
-	       $(1)/config/crash_report.txt \
+	       $(1)/config/user_filaments.json \
+	       $(1)/config/crash*.txt \
+	       $(1)/config/.crash_restart_count \
 	       $(1)/config/crash_history.json \
-	       $(1)/config/feedback_queue.json \
 	       $(1)/config/.helix-screen.lock \
 	       2>/dev/null || true
 endef
@@ -2755,11 +2786,17 @@ endef
 # ambient $(ENABLE_DEV_PANELS) would therefore never fire.
 DEV_PANEL_XML := gcode_test_panel.xml glyphs_panel.xml step_test_panel.xml test_panel.xml
 
-# Stage ui_xml/ + config/ into a release tree, minus the dev-panel layouts.
+# Stage ui_xml/ + config/ + moonraker-plugin/ into a release tree, minus the
+# dev-panel layouts and the plugin's dev-only files. moonraker-plugin must ride
+# every release: HelixPluginInstaller (src/system/helix_plugin_installer.cpp)
+# resolves <install>/moonraker-plugin/install.sh next to bin/helix-screen, and
+# without it the in-UI plugin install/uninstall fails on every release install.
 # Args: $(1) = staged release root (e.g. $(RELEASE_DIR)/helixscreen)
 define release-copy-xml-config
-	@cp -r ui_xml config $(1)/
+	@cp -r ui_xml config moonraker-plugin $(1)/
 	@rm -f $(addprefix $(1)/ui_xml/,$(DEV_PANEL_XML))
+	@rm -rf $(1)/moonraker-plugin/tests $(1)/moonraker-plugin/TESTING_PLAN.md
+	@find $(1)/moonraker-plugin -type d -name __pycache__ -prune -exec rm -rf {} +
 	@# Minify the STAGED copy only -- never ui_xml/ in the source tree. The XML
 	@# engine keeps a verbatim copy of every component's <view> source text alive
 	@# for the whole session (lv_xml_component.c extract_view_content: it is
@@ -2809,6 +2846,24 @@ endef
 
 .PHONY: release-pi release-pi32 release-ad5m release-k1 release-ad5x release-k1-dynamic release-k2 release-snapmaker-u1 release-x86 release-all release-clean pi-fbdev-docker pi32-fbdev-docker pi-all-docker pi32-all-docker x86-fbdev-docker x86-all-docker
 
+# Host CA bundle packaged when a platform has no toolchain-extracted one.
+CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt
+
+# CA bundle for HTTPS verification, the fallback for devices without system
+# certs. The toolchain image's copy (extract-ca-certs) wins; CI never runs the
+# *-docker targets, so the build host's bundle stands in. An absent or empty
+# bundle fails the release rather than shipping none.
+define release-ca-bundle
+	@ca=build/$(1)/certs/ca-certificates.crt; [ -s "$$ca" ] || ca="$(CA_BUNDLE)"; \
+	if [ ! -s "$$ca" ]; then \
+		echo "$(RED)$(BOLD)✗ No CA bundle for $(1): build/$(1)/certs/ca-certificates.crt and CA_BUNDLE=$(CA_BUNDLE) are missing or empty.$(RESET)"; \
+		exit 1; \
+	fi; \
+	mkdir -p $(RELEASE_DIR)/helixscreen/certs; \
+	cp "$$ca" $(RELEASE_DIR)/helixscreen/certs/ca-certificates.crt; \
+	echo "  $(DIM)Included CA certificates for HTTPS ($$ca)$(RESET)"
+endef
+
 # Package Pi release
 release-pi: | build/pi/bin/helix-screen build/pi/bin/helix-splash build/pi-fbdev/bin/helix-screen
 	@echo "$(CYAN)$(BOLD)Packaging Pi release v$(VERSION)...$(RESET)"
@@ -2845,6 +2900,7 @@ release-pi: | build/pi/bin/helix-screen build/pi/bin/helix-splash build/pi-fbdev
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
+	$(call release-ca-bundle,pi)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -2891,6 +2947,7 @@ release-pi32: | build/pi32/bin/helix-screen build/pi32/bin/helix-splash build/pi
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
+	$(call release-ca-bundle,pi32)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -2939,12 +2996,7 @@ release-ad5m: | build/ad5m/bin/helix-screen build/ad5m/bin/helix-splash
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
-	@# Bundle CA certificates for HTTPS verification (fallback if device lacks system certs)
-	@if [ -f "build/ad5m/certs/ca-certificates.crt" ]; then \
-		mkdir -p $(RELEASE_DIR)/helixscreen/certs; \
-		cp build/ad5m/certs/ca-certificates.crt $(RELEASE_DIR)/helixscreen/certs/; \
-		echo "  $(DIM)Included CA certificates for HTTPS$(RESET)"; \
-	fi
+	$(call release-ca-bundle,ad5m)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -2990,12 +3042,7 @@ release-ad5x: | build/ad5x/bin/helix-screen build/ad5x/bin/helix-splash
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
-	@# Bundle CA certificates for HTTPS verification (fallback if device lacks system certs)
-	@if [ -f "build/ad5x/certs/ca-certificates.crt" ]; then \
-		mkdir -p $(RELEASE_DIR)/helixscreen/certs; \
-		cp build/ad5x/certs/ca-certificates.crt $(RELEASE_DIR)/helixscreen/certs/; \
-		echo "  $(DIM)Included CA certificates for HTTPS$(RESET)"; \
-	fi
+	$(call release-ca-bundle,ad5x)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -3041,12 +3088,7 @@ release-cc1: | build/cc1/bin/helix-screen build/cc1/bin/helix-splash
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
-	@# Bundle CA certificates for HTTPS verification (fallback if device lacks system certs)
-	@if [ -f "build/cc1/certs/ca-certificates.crt" ]; then \
-		mkdir -p $(RELEASE_DIR)/helixscreen/certs; \
-		cp build/cc1/certs/ca-certificates.crt $(RELEASE_DIR)/helixscreen/certs/; \
-		echo "  $(DIM)Included CA certificates for HTTPS$(RESET)"; \
-	fi
+	$(call release-ca-bundle,cc1)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -3092,12 +3134,7 @@ release-k1: | build/mips/bin/helix-screen build/mips/bin/helix-splash
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
-	@# Bundle CA certificates for HTTPS verification (fallback if device lacks system certs)
-	@if [ -f "build/mips/certs/ca-certificates.crt" ]; then \
-		mkdir -p $(RELEASE_DIR)/helixscreen/certs; \
-		cp build/mips/certs/ca-certificates.crt $(RELEASE_DIR)/helixscreen/certs/; \
-		echo "  $(DIM)Included CA certificates for HTTPS$(RESET)"; \
-	fi
+	$(call release-ca-bundle,mips)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -3140,6 +3177,7 @@ release-k1-dynamic: | build/k1-dynamic/bin/helix-screen build/k1-dynamic/bin/hel
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
+	$(call release-ca-bundle,k1-dynamic)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -3193,6 +3231,7 @@ release-k2: | build/k2/bin/helix-screen build/k2/bin/helix-splash
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
+	$(call release-ca-bundle,k2)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true
@@ -3231,11 +3270,7 @@ release-snapmaker-u1: | build/snapmaker-u1/bin/helix-screen
 	@for f in $(RELEASE_ASSET_FILES); do \
 		if [ -f "$$f" ]; then cp "$$f" $(RELEASE_DIR)/helixscreen/assets/; fi; \
 	done
-	@if [ -f "build/snapmaker-u1/certs/ca-certificates.crt" ]; then \
-		mkdir -p $(RELEASE_DIR)/helixscreen/certs; \
-		cp build/snapmaker-u1/certs/ca-certificates.crt $(RELEASE_DIR)/helixscreen/certs/; \
-		echo "  $(DIM)Included CA certificates for HTTPS$(RESET)"; \
-	fi
+	$(call release-ca-bundle,snapmaker-u1)
 	@if [ -d "build/assets/images/prerendered" ]; then \
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/prerendered; \
 		cp -r build/assets/images/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/prerendered/; \
@@ -3290,6 +3325,7 @@ release-x86: | build/x86/bin/helix-screen build/x86/bin/helix-splash build/x86-f
 		mkdir -p $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered; \
 		cp -r build/assets/images/printers/prerendered/* $(RELEASE_DIR)/helixscreen/assets/images/printers/prerendered/; \
 	fi
+	$(call release-ca-bundle,x86)
 	@find $(RELEASE_DIR)/helixscreen -name '.DS_Store' -delete 2>/dev/null || true
 	$(call release-clean-assets,$(RELEASE_DIR)/helixscreen)
 	@xattr -cr $(RELEASE_DIR)/helixscreen 2>/dev/null || true

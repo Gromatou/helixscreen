@@ -380,12 +380,12 @@ bool DisplayManager::init(const Config& config) {
             } else {
                 lv_display_set_rotation(m_display, lv_rot);
 
-                // Update tracked dimensions to match rotated resolution
+                // The backend may clear LVGL's rotation when the scanout plane
+                // rotates instead, so read the resolution it settles on.
+                m_backend->set_display_rotation(lv_rot, phys_w, phys_h);
+
                 m_width = lv_display_get_horizontal_resolution(m_display);
                 m_height = lv_display_get_vertical_resolution(m_display);
-
-                // Auto-rotate touch coordinates to match display rotation
-                m_backend->set_display_rotation(lv_rot, phys_w, phys_h);
             }
 
             spdlog::info("[DisplayManager] Display rotated {}° — effective resolution: {}x{}",
@@ -449,20 +449,7 @@ bool DisplayManager::init(const Config& config) {
 
     // Configure scroll behavior and sleep-aware wrapper
     if (m_pointer) {
-        configure_scroll(config.scroll_throw, config.scroll_limit);
-        // Long-press threshold — user-configurable global setting (#1245), default
-        // AppConstants::Input::LONG_PRESS_MS. Applied here and on backend swap;
-        // InputSettingsManager::set_long_press_time live-applies changes.
-        const int long_press_ms = helix::Config::get_instance()->get<int>(
-            "/input/long_press_time", static_cast<int>(AppConstants::Input::LONG_PRESS_MS));
-        lv_indev_set_long_press_time(m_pointer, long_press_ms);
-#ifndef HELIX_DISPLAY_SDL
-        // Only install on embedded - SDL's event handler identifies the mouse device
-        // by checking if read_cb == sdl_mouse_read, which our wrapper breaks.
-        // Callback chain: sleep_aware_read_cb -> calibrated_read_cb -> evdev_read_cb
-        // (calibrated_read installed by backend, sleep wrapper installed here)
-        install_sleep_aware_input_wrapper();
-#endif
+        configure_pointer(config.scroll_throw, config.scroll_limit);
     }
 
     // Create keyboard input device (optional)
@@ -493,15 +480,15 @@ bool DisplayManager::init(const Config& config) {
         }
     }
 
-    // Real panel power-off (FB_BLANK_POWERDOWN / DRM connector DPMS-off), applied
-    // ALONGSIDE the backlight write rather than instead of it: enter_sleep() writes
-    // brightness 0 whichever mechanism it picks, and some panel controllers treat
-    // duty zero as "dim" and keep the LEDs powered, so a device that can dim still
-    // needs the panel cut (#1049, #1594).
+    // Real panel power-off (FB_BLANK_POWERDOWN / DRM connector DPMS-off) is the
+    // last resort for a panel with no controllable backlight. A device with a
+    // usable backlight sleeps by writing brightness 0 in enter_sleep(), because a
+    // power-down its driver does not expect can wedge the display engine or leave
+    // the panel lit on a no-signal pattern. See should_use_power_off().
     //
     // Config override: /display/panel_power_off (0 or 1). Missing (-1) = auto.
-    // It exists so a platform whose driver cannot survive a CRTC disable can be
-    // switched off in the field without waiting for a release.
+    // 1 cuts the panel on hardware whose backlight write leaves the LEDs lit
+    // (#1594); 0 keeps it powered on a panel that does not recover from it.
     bool has_usable_backlight = m_backlight && m_backlight->is_available();
     bool backend_can_power_off = m_backend && m_backend->supports_power_off();
     {
@@ -512,7 +499,8 @@ bool DisplayManager::init(const Config& config) {
             spdlog::info("[DisplayManager] Display power-off: {} (config override)",
                          m_use_power_off);
         } else {
-            m_use_power_off = should_use_power_off(m_use_hardware_blank, backend_can_power_off);
+            m_use_power_off = should_use_power_off(m_use_hardware_blank, has_usable_backlight,
+                                                   backend_can_power_off);
             spdlog::info("[DisplayManager] Display power-off: {} ({})", m_use_power_off,
                          m_use_power_off
                              ? m_backend->name()
@@ -609,7 +597,7 @@ bool DisplayManager::init(const Config& config) {
 
     spdlog::trace("[DisplayManager] Initialized: {}x{}", m_width, m_height);
     m_initialized = true;
-    s_instance = this;
+    set_active_instance(this);
 
     // Install framebuffer color transform hook AFTER the backend's flush_cb
     // is set, so the splash-suspend path captures our wrapper (#803).
@@ -647,13 +635,17 @@ DisplayManager* DisplayManager::instance() {
     return s_instance;
 }
 
+void DisplayManager::set_active_instance(DisplayManager* dm) {
+    s_instance = dm;
+}
+
 void DisplayManager::shutdown() {
     if (!m_initialized) {
         return;
     }
 
     m_shutting_down = true;
-    s_instance = nullptr;
+    set_active_instance(nullptr);
     spdlog::debug("[DisplayManager] Shutting down");
 
     // Stop the remote-screen mirror FIRST so no sink write races a freed
@@ -745,6 +737,42 @@ void DisplayManager::configure_scroll(int scroll_throw, int scroll_limit) {
     spdlog::trace("[DisplayManager] Scroll config: throw={}, limit={}", scroll_throw, scroll_limit);
 }
 
+void DisplayManager::configure_pointer(int scroll_throw, int scroll_limit) {
+    configure_scroll(scroll_throw, scroll_limit);
+    // Long-press threshold — user-configurable global setting (#1245), default
+    // AppConstants::Input::LONG_PRESS_MS. InputSettingsManager::set_long_press_time
+    // live-applies changes.
+    auto* cfg = helix::Config::get_instance();
+    const int long_press_ms = cfg->get<int>("/input/long_press_time",
+                                            static_cast<int>(AppConstants::Input::LONG_PRESS_MS));
+    lv_indev_set_long_press_time(m_pointer, long_press_ms);
+
+    // Config rather than InputSettingsManager: this runs before its subjects exist.
+    // Both read the same key; the Settings toggle asks for a restart.
+    m_scroll_guard = helix::ScrollClickGuard::from_settings(
+        cfg->get<bool>("/input/scroll_guard", false),
+        cfg->get<int>("/input/scroll_guard_cooldown_ms",
+                      static_cast<int>(helix::ScrollClickGuard::DEFAULT_COOLDOWN_MS)),
+        std::getenv("HELIX_SCROLL_GUARD"), std::getenv("HELIX_SCROLL_GUARD_COOLDOWN_MS"),
+        scroll_limit);
+
+    // SDL's event handler identifies the mouse device by checking if
+    // read_cb == sdl_mouse_read, which a wrapper breaks.
+    // Callback chain: sleep_aware_read_cb (runs the scroll guard) -> calibrated_read_cb
+    // -> evdev_read_cb (calibrated_read installed by backend, sleep wrapper installed here)
+    if (m_backend->type() != DisplayBackendType::SDL) {
+        install_sleep_aware_input_wrapper();
+    }
+    if (m_scroll_guard.enabled && !m_original_pointer_read_cb) {
+        spdlog::info("[DisplayManager] Post-scroll click guard not applied: the {} pointer "
+                     "has no input wrapper",
+                     m_backend->name());
+    } else if (m_scroll_guard.enabled) {
+        spdlog::info("[DisplayManager] Post-scroll click guard: {} ms cooldown, {} px scroll limit",
+                     m_scroll_guard.cooldown_ms, m_scroll_guard.scroll_limit_px);
+    }
+}
+
 void DisplayManager::rebuild_input_after_backend_swap() {
     // A backend swap (DRM→fbdev rotation fallback) deleted the display and freed
     // the old backend. lv_display_delete() only detaches indevs (sets their
@@ -767,13 +795,7 @@ void DisplayManager::rebuild_input_after_backend_swap() {
 
     m_pointer = m_backend->create_input_pointer();
     if (m_pointer) {
-        configure_scroll(m_scroll_throw, m_scroll_limit);
-        const int long_press_ms = helix::Config::get_instance()->get<int>(
-            "/input/long_press_time", static_cast<int>(AppConstants::Input::LONG_PRESS_MS));
-        lv_indev_set_long_press_time(m_pointer, long_press_ms);
-#ifndef HELIX_DISPLAY_SDL
-        install_sleep_aware_input_wrapper();
-#endif
+        configure_pointer(m_scroll_throw, m_scroll_limit);
     }
 
     m_keyboard = m_backend->create_input_keyboard();
@@ -1162,6 +1184,7 @@ void DisplayManager::check_display_sleep() {
                 // Suspend active panel lifecycle to stop widget timers (clock, etc.)
                 // that would otherwise invalidate underlying UI and bleed through
                 NavigationManager::instance().suspend_active();
+                m_lifecycle_suspended = true;
                 ScreensaverManager::instance().start(ScreensaverManager::configured_type());
                 m_screensaver_active = true;
                 if (m_backlight) {
@@ -1236,7 +1259,14 @@ void DisplayManager::wake_display() {
     if (m_screensaver_active) {
         ScreensaverManager::instance().stop();
         m_screensaver_active = false;
-        // Resume active panel lifecycle to restart widget timers
+    }
+    // Resume only a suspend this manager requested. enter_sleep() stops the
+    // screensaver without resuming, so gating on m_screensaver_active alone
+    // would leave the view deactivated after a sleep that followed a dim — but
+    // Application's background/foreground pair owns a second suspend of the
+    // same latch, and a wake while backgrounded must not steal it.
+    if (m_lifecycle_suspended) {
+        m_lifecycle_suspended = false;
         NavigationManager::instance().resume_active();
     }
 #else
@@ -1306,6 +1336,7 @@ void DisplayManager::preview_screensaver(int type) {
     spdlog::info("[DisplayManager] Previewing screensaver type {}", type);
     // Suspend active panel so widget timers stop updating the background
     NavigationManager::instance().suspend_active();
+    m_lifecycle_suspended = true;
     ScreensaverManager::instance().start(ss_type);
     // Mark display as dimmed so wake_display() runs on touch; is_preview
     // flag suppresses auto-lock on dismiss.
@@ -1524,6 +1555,9 @@ void DisplayManager::sleep_aware_read_cb(lv_indev_t* indev, lv_indev_data_t* dat
                          data->point.x, data->point.y);
         }
     }
+
+    // After the wake handling, so a suppressed press can never cost a wake request.
+    dm->m_scroll_guard.filter(data->state, data->point, lv_tick_get());
 }
 
 void DisplayManager::install_sleep_aware_input_wrapper() {
@@ -1647,10 +1681,13 @@ void DisplayManager::apply_rotation(int degrees) {
 
     lv_display_set_rotation(m_display, lv_rot);
 
+    // The backend may clear LVGL's rotation when the scanout plane rotates
+    // instead, so read the resolution it settles on — the same order init()
+    // applies (#1275, #1587).
+    m_backend->set_display_rotation(lv_rot, phys_w, phys_h);
+
     m_width = lv_display_get_horizontal_resolution(m_display);
     m_height = lv_display_get_vertical_resolution(m_display);
-
-    m_backend->set_display_rotation(lv_rot, phys_w, phys_h);
 
     spdlog::info("[DisplayManager] Display rotated {}° — effective resolution: {}x{}", degrees,
                  m_width, m_height);

@@ -393,6 +393,13 @@ main() {
     detect_init_system
     check_klipper_ecosystem "$platform"
 
+    # An update or reinstall must follow the channel the installed app is on:
+    # a beta user updating through KIAUH or a re-run of the installer would
+    # otherwise be handed the stable build. No-op on a fresh install.
+    if [ "$update_mode" = true ] || [ -d "$INSTALL_DIR" ]; then
+        resolve_update_channel
+    fi
+
     # Get version (skip if using local archive)
     if [ -n "$local_tarball" ]; then
         # Validate local file exists
@@ -411,9 +418,27 @@ main() {
     else
         if [ -z "$version" ]; then
             version=$(get_latest_version "$download_platform")
+        else
+            # After resolve_update_channel: a channel read from the installed
+            # config outranks the one a prerelease --version implies. A --local
+            # archive never moves the channel; it picks a build, not a feed.
+            match_channel_to_version "$version"
         fi
     fi
     log_info "Target version: ${BOLD}${version}${NC}"
+
+    # Download/stage the release archive BEFORE any step that modifies the
+    # running printer (stock-UI disable, competing-UI shutdown, old-install
+    # cleanup, service stop): a failed download must leave the machine exactly
+    # as it was - stock UI enabled, old install intact, service running. The
+    # download also needs the network, and stopping UIs can take it away
+    # (e.g. Snapmaker U1's stock GUI owns wpa_supplicant, so restarting it
+    # drops WiFi/SSH mid-update).
+    if [ -n "$local_tarball" ]; then
+        use_local_tarball "$local_tarball"
+    else
+        download_release "$version" "$download_platform"
+    fi
 
     # Configure platform-specific settings before stopping UIs
     configure_platform
@@ -424,17 +449,6 @@ main() {
     # Clean old installation if requested
     if [ "$clean_mode" = true ]; then
         clean_old_installation "$platform"
-    fi
-
-    # Download/stage the release archive BEFORE stopping the service.
-    # Stopping helixscreen first can disrupt the network on some platforms
-    # (e.g. Snapmaker U1 where platform_post_stop restarts the stock GUI which
-    # owns wpa_supplicant and drops WiFi/SSH mid-update). Staging first also
-    # means a failed download leaves the running service untouched.
-    if [ -n "$local_tarball" ]; then
-        use_local_tarball "$local_tarball"
-    else
-        download_release "$version" "$download_platform"
     fi
 
     if [ "$update_mode" = true ]; then
@@ -462,6 +476,12 @@ main() {
     # self-skips on the root-only platforms (ad5m/ad5x/k1/k2), when KLIPPER_USER
     # is root, and under NoNewPrivileges where sudo is unavailable.
     install_permission_rules "$platform"
+
+    # QIDI: take over the .3mf plate-thumbnail duty the stopped stock screen
+    # carried (prestonbrown/helixscreen#1713). No-op off QIDI-class hosts and
+    # on firmware whose Moonraker extracts thumbnails itself. Post-extract
+    # because the helper and its unit templates ship in the payload's config/.
+    install_qidi_3mf_thumbs
 
     # Install KIAUH extension if KIAUH is detected
     install_kiauh_extension "$skip_kiauh_registration" || true
@@ -519,6 +539,7 @@ main() {
     else
         seed_from_moonraker_detection || true
     fi
+    seed_update_channel
 
     # Configure ALSA "default" when the board has no card 0 (e.g. Pi + HDMI-audio
     # screens like the BTT HDMI5, whose only outputs are vc4hdmi0/vc4hdmi1 at

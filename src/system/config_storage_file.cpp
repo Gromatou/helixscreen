@@ -2,6 +2,7 @@
 #include "ui_error_reporting.h"
 
 #include "config_storage.h"
+#include "system/helix_paths.h"
 
 #if !defined(HELIX_SPLASH_ONLY) && !defined(HELIX_WATCHDOG)
 #include "system/telemetry_manager.h"
@@ -72,18 +73,7 @@ class FileConfigStorage : public ConfigStorage {
         // the fsyncs a power cycle can leave settings.json empty on
         // flash-backed filesystems).
         try {
-            std::string target_path = path_;
-            {
-                std::error_code ec;
-                if (fs::is_symlink(path_, ec)) {
-                    auto real = fs::canonical(path_, ec);
-                    if (!ec) {
-                        spdlog::debug("[ConfigStorage] Resolved symlink {} -> {}", path_,
-                                      real.string());
-                        target_path = real.string();
-                    }
-                }
-            }
+            std::string target_path = helix::paths::write_target(path_);
 
             std::string tmp_path = target_path + ".tmp";
             {

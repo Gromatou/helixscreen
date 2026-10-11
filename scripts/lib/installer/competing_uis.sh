@@ -204,7 +204,7 @@ _host_ships_a_stock_ui() {
 # Stop the QIDI stock screen in the two shapes COMPETING_UIS cannot name.
 # Sets found_any in the caller's scope, like the sibling handlers.
 stop_qidi_competing_uis() {
-    local bin unit unit_path
+    local bin unit unit_path stopped=false
 
     for bin in $QIDI_STOCK_UI_BINS; do
         [ -f "$bin" ] || continue
@@ -215,6 +215,7 @@ stop_qidi_competing_uis() {
         $SUDO chmod a-x "$bin" 2>/dev/null || true
         record_disabled_service "sysv-chmod" "$bin"
         found_any=true
+        stopped=true
     done
 
     for unit_path in /etc/systemd/system/*.service /lib/systemd/system/*.service; do
@@ -230,7 +231,37 @@ stop_qidi_competing_uis() {
         $SUDO systemctl disable "$unit" 2>/dev/null || true
         record_disabled_service "systemd" "$unit"
         found_any=true
+        stopped=true
     done
+
+    # The stock client also supplies the MQTT link credentials and the QIDI Box
+    # filament state, so replacing it costs more than the screen.
+    if [ "$stopped" = true ]; then
+        log_warn "QIDI Studio box sync, QIDI cloud and QIDI Box filament edits depend on the stock QIDI client"
+        log_warn "and will not work while HelixScreen replaces it. Uninstalling HelixScreen restores them."
+    fi
+}
+
+# QIDI .3mf thumbnails (prestonbrown/helixscreen#1713): QIDI's customized
+# Moonraker hardcodes every uploaded .3mf's thumbnail metadata at
+# .thumbs/<subdir>/<stem>/plate_N.png and extracts no image itself; the stock
+# screen client this installer stops is what wrote those files. The units,
+# their gate and their refresh live in the shipped
+# $INSTALL_DIR/config/qidi-3mf-thumbs-units.sh so the install path and the
+# post-update refresh path (which has no sudo under NoNewPrivileges) run the
+# same code. This step just invokes the installed copy with the resolved
+# Klipper identity; it exits 0 with a logged reason wherever the capability
+# gate does not hold. Runs post-extract, since the payload carries it.
+install_qidi_3mf_thumbs() {
+    local units_sh="${INSTALL_DIR}/config/qidi-3mf-thumbs-units.sh"
+
+    if [ ! -f "$units_sh" ]; then
+        log_warn "QIDI thumbnail units script missing under ${INSTALL_DIR}/config -- skipping"
+        return 0
+    fi
+    HELIX_QIDI_HOME="${HELIX_QIDI_HOME:-${KLIPPER_HOME:-}}" \
+        $SUDO "$units_sh" "${KLIPPER_USER:-}" "${KLIPPER_GROUP:-}" || true
+    return 0
 }
 
 # Ensure SSH (dropbear) is running and will start on boot.

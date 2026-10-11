@@ -84,7 +84,7 @@ bool FilamentMappingCard::recompute_visibility() {
     // Snapmaker U1 / ACE, back when a second surface (the print-detail FILAMENTS
     // card) drew the same chips there. That surface is gone, so hiding here would
     // show the user nothing at all. Whether a TAP does anything is a separate
-    // question, answered by PrintSelectDetailView::color_card_opens_remap().
+    // question, answered by PrintSelectDetailView::current_remap_block().
 
     // A dead-control rule survives here even without the editable-backend gate
     // above: with bypass engaged a single-tool print takes its filament from
@@ -412,20 +412,32 @@ void FilamentMappingCard::rebuild_compact_view() {
                 // prints in grey", a claim nothing has made. (K2 Plus report.)
                 lv_obj_set_style_bg_opa(top, LV_OPA_TRANSP, 0); // DECLARATIVE_OK: see above
             }
-            if (auto* tool_lbl = lv_obj_find_by_name(top, "tool_label")) {
-                if (multi_tool) {
-                    lv_label_set_text_fmt(tool_lbl, "T%d", tool.tool_index);
-                    // Contrast is computed against the fill; with no fill there is
-                    // nothing to contrast against, so take the normal text colour.
-                    lv_obj_set_style_text_color(tool_lbl,
-                                                tool.color_known ? theme_manager_get_contrast_color(
-                                                                       lv_color_hex(tool.color_rgb))
-                                                                 : theme_manager_get_color("text"),
-                                                0);
-                    lv_obj_remove_flag(tool_lbl, LV_OBJ_FLAG_HIDDEN);
-                } else {
-                    lv_obj_add_flag(tool_lbl, LV_OBJ_FLAG_HIDDEN);
-                }
+            // The material names the tool on its own, so it takes the band; the
+            // Tx number is the fallback for a file that reports no material.
+            auto* material_lbl = lv_obj_find_by_name(top, "material_label");
+            auto* tool_lbl = lv_obj_find_by_name(top, "tool_label");
+            lv_obj_t* shown = nullptr;
+            if (!tool.material.empty() && material_lbl) {
+                lv_label_set_text(material_lbl, tool.material.c_str());
+                shown = material_lbl;
+            } else if (multi_tool && tool_lbl) {
+                lv_label_set_text_fmt(tool_lbl, "T%d", tool.tool_index);
+                shown = tool_lbl;
+            }
+            if (shown) {
+                // Contrast is computed against the fill; with no fill there is
+                // nothing to contrast against, so take the normal text colour.
+                lv_obj_set_style_text_color(
+                    shown,
+                    tool.color_known
+                        ? theme_manager_get_contrast_adjusted_text(theme_manager_get_color("text"),
+                                                                   lv_color_hex(tool.color_rgb))
+                        : theme_manager_get_color("text"),
+                    0);
+                lv_obj_remove_flag(shown, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (tool_lbl && shown != tool_lbl) {
+                lv_obj_add_flag(tool_lbl, LV_OBJ_FLAG_HIDDEN);
             }
         }
 
@@ -454,11 +466,12 @@ void FilamentMappingCard::rebuild_compact_view() {
                     lv_label_set_text_fmt(slot_lbl, "%d", lane_number);
                     // An empty lane draws no fill, so there is nothing to contrast
                     // against - take the warning colour that the band border uses.
-                    lv_obj_set_style_text_color(slot_lbl,
-                                                slot_empty
-                                                    ? theme_manager_get_color("warning")
-                                                    : theme_manager_get_contrast_color(slot_color),
-                                                0);
+                    lv_obj_set_style_text_color(
+                        slot_lbl,
+                        slot_empty ? theme_manager_get_color("warning")
+                                   : theme_manager_get_contrast_adjusted_text(
+                                         theme_manager_get_color("text"), slot_color),
+                        0);
                     lv_obj_remove_flag(slot_lbl, LV_OBJ_FLAG_HIDDEN);
                 } else {
                     lv_obj_add_flag(slot_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -473,7 +486,7 @@ void FilamentMappingCard::rebuild_compact_view() {
             const lv_color_t top_color = tool.color_known ? lv_color_hex(tool.color_rgb) : neutral;
             lv_obj_set_style_bg_color(
                 divider,
-                theme_manager_get_contrast_color(lv_color_mix(top_color, slot_color, LV_OPA_50)),
+                theme_manager_get_readable_on(lv_color_mix(top_color, slot_color, LV_OPA_50)),
                 0); // DECLARATIVE_OK: see above
         }
     }

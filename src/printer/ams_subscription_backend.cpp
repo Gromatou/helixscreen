@@ -361,13 +361,11 @@ bool AmsSubscriptionBackend::toolhead_homed() const {
     return helix::toolhead_is_homed(api_->printer_state());
 }
 
-AmsError
-AmsSubscriptionBackend::ensure_homed_then(std::string gcode, std::function<void()> on_complete,
-                                          std::function<void(const MoonrakerError&)> on_error,
-                                          uint32_t timeout_ms, bool skip_homing, bool silent,
-                                          std::optional<bool> caller_surfaces_errors,
-                                          std::function<void(const MoonrakerError&)>
-                                              on_predispatch_error) {
+AmsError AmsSubscriptionBackend::ensure_homed_then(
+    std::string gcode, std::function<void()> on_complete,
+    std::function<void(const MoonrakerError&)> on_error, uint32_t timeout_ms, bool skip_homing,
+    bool silent, std::optional<bool> caller_surfaces_errors,
+    std::function<void(const MoonrakerError&)> on_predispatch_error) {
     // The homed answer comes from the live homed_axes subject, not an RPC:
     // toolhead is in the standing objects.subscribe set, so querying it again
     // was a redundant round trip. skip_homing short-circuits the check
@@ -552,11 +550,18 @@ AmsSubscriptionBackend::dispatch_payload(std::string gcode, std::function<void()
 
     api_->execute_gcode(
         gcode,
-        [tag, on_complete = std::move(on_complete)]() {
+        [tag, token, on_complete = std::move(on_complete)]() {
             spdlog::debug("{} G-code executed successfully", tag);
-            if (on_complete) {
-                on_complete();
+            if (!on_complete) {
+                return;
             }
+            // The answer lands on the libhv response thread, while the status
+            // frames that arrived before it are still queued for main. A
+            // completion that judges state (CFS reads the toolhead switch) must
+            // run behind them, on main, or it reads values those frames are
+            // about to replace.
+            token.defer("AmsSubscriptionBackend::dispatch_payload_complete",
+                        [on_complete]() { on_complete(); });
         },
         [this, token, on_error](const MoonrakerError& err) {
             // L081 Mechanism C: this lands on the libhv response thread and

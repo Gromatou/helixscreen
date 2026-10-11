@@ -189,9 +189,8 @@ static void animations_pref_observer_cb(lv_observer_t* observer, lv_subject_t* s
     }
     auto declared = static_cast<lv_label_long_mode_t>(
         reinterpret_cast<intptr_t>(lv_observer_get_user_data(observer)));
-    lv_label_set_long_mode(label, helix::ui::animations_enabled(subject)
-                                      ? declared
-                                      : LV_LABEL_LONG_MODE_CLIP);
+    lv_label_set_long_mode(label, helix::ui::animations_enabled(subject) ? declared
+                                                                         : LV_LABEL_LONG_MODE_CLIP);
 }
 
 /**
@@ -355,8 +354,11 @@ static void ui_text_button_apply(lv_xml_parser_state_t* state, const char** attr
 
     // Only apply auto-contrast if parent has a visible background
     if (bg_opa > LV_OPA_50) {
-        // Use theme-aware contrast text (matches ui_button)
-        lv_color_t text_color = theme_manager_get_contrast_color(bg_color);
+        // The parent is a filled button, so its colour is an accent; the label
+        // starts from the palette text colour and shifts only as far as needed
+        // (matches ui_button)
+        lv_color_t text_color =
+            theme_manager_get_contrast_adjusted_text(theme_manager_get_color("text"), bg_color);
         lv_obj_set_style_text_color(label, text_color, LV_PART_MAIN);
     }
 }

@@ -120,6 +120,7 @@
   <translation tag="Abort already in progress" ja="中止がすでに進行中です"/>
   <translation tag="Abort failed" ja="中止に失敗"/>
   <translation tag="Aborting AFC operation..." ja="AFC操作を中止中..."/>
+  <translation tag="Aborting..." ja="中止中..."/>
   <translation tag="About" ja="バージョン情報"/>
   <translation tag="Accel to Decel" ja="加速から減速"/>
   <translation tag="Acceleration to deceleration limit (mm/s²)" ja="加速から減速の制限値 (mm/s²)"/>
@@ -143,6 +144,7 @@
   <translation tag="Add Vendor" ja="ベンダーを追加"/>
   <translation tag="Add Widget" ja="ウィジェットを追加"/>
   <translation tag="Add custom filament" ja="カスタムフィラメントを追加"/>
+  <translation tag="Add page" ja="ページを追加"/>
   <translation tag="Added to Spoolman" ja="Spoolman に追加しました"/>
   <translation tag="Address" ja="アドレス"/>
   <translation tag="Adjust belt tension until the belt appears stationary" ja="ベルトが静止して見えるまでベルト張力を調整してください"/>
@@ -578,11 +580,15 @@
   <translation tag="Copied to clipboard!" ja="クリップボードにコピーしました！"/>
   <translation tag="Copy Command" ja="コマンドをコピー"/>
   <translation tag="Copy failed - use SSH manually" ja="コピー失敗 - SSHを手動で使用してください"/>
+  <translation tag="Copying from USB" ja="USB からコピー中"/>
+  <translation tag="Copying from USB stopped responding" ja="USB からのコピーが応答しなくなりました"/>
+  <translation tag="Copying from USB..." ja="USB からコピー中..."/>
   <translation tag="Corner roundness" ja="角の丸み"/>
   <translation tag="Correction (Ki)" ja="補正 (Ki)"/>
   <translation tag="Could not analyze PRINT_START macro. Some print options may be unavailable." ja="PRINT_START マクロを分析できませんでした。一部の印刷オプションが利用できない場合があります。"/>
   <translation tag="Could not answer the connection request" ja="接続リクエストに応答できませんでした"/>
   <translation tag="Could not check webcam status.&#10;Check printer connection." ja="ウェブカメラの状態を確認できませんでした。&#10;プリンター接続を確認してください。"/>
+  <translation tag="Could not copy {} from USB: {}" ja="{} を USB からコピーできませんでした: {}"/>
   <translation tag="Could not forget device" ja="デバイスの登録を解除できませんでした"/>
   <translation tag="Could not load printer database" ja="プリンターデータベースを読み込めませんでした"/>
   <translation tag="Could not parse tips database" ja="ヒントデータベースを解析できませんでした"/>
@@ -669,6 +675,7 @@
   <translation tag="Deploy" ja="展開"/>
   <translation tag="Describe the issue (optional)" ja="問題の詳細（任意）"/>
   <translation tag="Detailed" ja="詳細"/>
+  <translation tag="Detect automatically" ja="自動検出"/>
   <translation tag="Detecting plate..." ja="プレートを検出中..."/>
   <translation tag="Detecting printer type..." ja="プリンタータイプを検出中..."/>
   <translation tag="Detecting..." ja="検出中..."/>
@@ -993,6 +1000,7 @@
   <translation tag="Filament is pulling tight" ja="フィラメントが引っ張られています"/>
   <translation tag="Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool." ja="アンロード後もフィラメントがノズルに残っています。カットまたは引き戻しが完了していない可能性があります。別のスプールを装填する前にツールヘッドを空にしてください。"/>
   <translation tag="Filament load failed: {}" ja="フィラメントの装填に失敗しました: {}"/>
+  <translation tag="Filament not set" ja="フィラメント未設定"/>
   <translation tag="Filament operation failed" ja="フィラメント操作に失敗しました"/>
   <translation tag="Filament operation timed out" ja="フィラメント操作がタイムアウトしました"/>
   <translation tag="Filament ran out - nothing at the toolhead and the print is paused." ja="フィラメントが切れました - ツールヘッドには何も残っておらず、印刷は一時停止しています。"/>
@@ -1000,6 +1008,8 @@
   <translation tag="Filament ran out at the toolhead" ja="ツールヘッドでフィラメントが切れました"/>
   <translation tag="Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume." ja="フィラメントが切れました。自動補充がオフのため、CFSは自動でスプールを切り替えません。フィラメントを装填してから再開してください。"/>
   <translation tag="Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume." ja="フィラメントが切れました。CFSは適合するスプールを認識していますが、該当するスロットは空です。いずれかを装填してから再開してください。"/>
+  <translation tag="Filament reload failed" ja="フィラメントの再装填に失敗しました"/>
+  <translation tag="Filament remapping is unavailable" ja="フィラメントのリマップは利用できません"/>
   <translation tag="Filament runout" ja="フィラメント切れ"/>
   <translation tag="Filament runout and motion detection sensors" ja="フィラメント切れとモーション検出センサー"/>
   <translation tag="Filament runout detection status" ja="フィラメント切れ検出の状態"/>
@@ -1213,7 +1223,6 @@
   <translation tag="Install Update" ja="更新をインストール"/>
   <translation tag="Install plugin" ja="プラグインをインストール"/>
   <translation tag="Install script not found. Use the remote install command instead." ja="インストールスクリプトが見つかりません。代わりにリモートインストールコマンドを使用してください。"/>
-  <translation tag="Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history." ja="印刷履歴に影響を与えずにフィラメントをリマップするには、詳細設定でHelixPrintプラグインをインストールしてください。"/>
   <translation tag="Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:" ja="高速 G-code 修正を有効にするために HelixPrint プラグインをインストールしてください。プリンターで SSH 経由でこのコマンドを実行してください:"/>
   <translation tag="Install the timelapse plugin via SSH,&#10;then tap &quot;Check Again&quot;." ja="SSHでタイムラプスプラグインをインストールし、&#10;「再確認」をタップしてください。"/>
   <translation tag="Install timelapse plugin" ja="タイムラプスプラグインをインストール"/>
@@ -1833,6 +1842,7 @@
   <translation tag="Print error" ja="印刷エラー"/>
   <translation tag="Print failed" ja="印刷失敗"/>
   <translation tag="Print history statistics" ja="印刷履歴の統計"/>
+  <translation tag="Print history will show the rewritten name" ja="印刷履歴には書き換え後の名前が表示されます"/>
   <translation tag="Print issue detected" ja="印刷の問題を検出しました"/>
   <translation tag="Print preparation failed: {}" ja="印刷準備に失敗しました: {}"/>
   <translation tag="Print progress and file selection" ja="印刷の進捗とファイル選択"/>
@@ -1976,7 +1986,9 @@
   <translation tag="Recording Mode" ja="録画モード"/>
   <translation tag="Recover" ja="回復"/>
   <translation tag="Recover MMU state?" ja="MMU の状態を復旧しますか？"/>
+  <translation tag="Recover State" ja="状態を回復"/>
   <translation tag="Recovering AFC system..." ja="AFCシステムを復旧中..."/>
+  <translation tag="Recovering..." ja="復旧中..."/>
   <translation tag="Recovery failed" ja="復旧失敗"/>
   <translation tag="Recovery failed: " ja="復旧に失敗しました: "/>
   <translation tag="Recovery failed: {}" ja="復旧に失敗しました: {}"/>
@@ -1997,7 +2009,8 @@
   <translation tag="Remaining (g)" ja="残量 (g)"/>
   <translation tag="Remaining Weight (g)" ja="残量（g）"/>
   <translation tag="Remap Tool" ja="ツールを再割当"/>
-  <translation tag="Remap needs the HelixPrint plugin" ja="リマップにはHelixPrintプラグインが必要です"/>
+  <translation tag="Remapping rewrites the job file before printing it. This printer&apos;s Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally." ja="リマップは印刷前にジョブファイルを書き換えます。このプリンターのMoonrakerは旧バージョンのため、HelixPrintプラグインが後から元のファイル名を復元できず、完了したジョブは書き換え後の名前で表示されます。リマップ自体は正常に動作します。"/>
+  <translation tag="Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.&#10;&#10;Installing the plugin takes a moment and needs no restart." ja="リマップは印刷前にジョブファイルを書き換えます。HelixPrintプラグインがない場合、書き換えられたコピーが印刷履歴に残るため、完了したジョブは選んだファイルではなくmodified_1730824_benchy.gcodeのような名前で表示されます。&#10;&#10;プラグインのインストールはすぐに完了し、再起動は必要ありません。"/>
   <translation tag="Remap…" ja="リマップ…"/>
   <translation tag="Remember slot spool details across an eject" ja="取り出し後もスロットのスプール情報を記憶します"/>
   <translation tag="Remove" ja="削除"/>
@@ -2240,6 +2253,7 @@
   <translation tag="Set logging verbosity for troubleshooting" ja="トラブルシューティング用のログの詳細レベルを設定"/>
   <translation tag="Set up" ja="セットアップ"/>
   <translation tag="Set up your label printer in Settings" ja="設定でラベルプリンターをセットアップしてください"/>
+  <translation tag="Set what is really selected and loaded. Nothing moves." ja="実際に選択・装填されている状態を設定します。何も動きません。"/>
   <translation tag="Settings" ja="設定"/>
   <translation tag="Settings Snapshot" ja="設定スナップショット"/>
   <translation tag="Settings reset to defaults. Restarting..." ja="設定をデフォルトにリセットしました。再起動中..."/>
@@ -2290,6 +2304,7 @@
   <translation tag="Slot %d: %.0fg of %.0fg needed" ja="スロット %d: %.0fg（必要 %.0fg）"/>
   <translation tag="Slot 1" ja="スロット1"/>
   <translation tag="Slot {}" ja="スロット {}"/>
+  <translation tag="Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print." ja="スロット {} にフィラメントの種類が設定されていないため、プリンターは再開しません。フィラメントパネルで材料を設定してから印刷を再開してください。"/>
   <translation tag="Slot {} is blocked — manual intervention required" ja="スロット {} がブロックされています — 手動での対応が必要です"/>
   <translation tag="Slot {} matches." ja="スロット {} が一致します。"/>
   <translation tag="Slot {} spool cleared" ja="スロット {} のスプールをクリアしました"/>
@@ -2512,6 +2527,10 @@
   <translation tag="This plugin lets HelixScreen control print start options like bed mesh and QGL. Once installed, use Configure PRINT_START below to enable optional steps." ja="このプラグインにより、HelixScreen がベッドメッシュや QGL などの印刷開始オプションを制御できます。インストール後、以下の「PRINT_START を設定」を使用してオプションの手順を有効にしてください。"/>
   <translation tag="This print needs about %.0fg but the spool has about %.0fg remaining. Start anyway?" ja="この印刷には約 %.0fg 必要ですが、スプールの残量は約 %.0fg です。それでも開始しますか？"/>
   <translation tag="This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets." ja="このプリンターは {} のようです（信頼度 {}%）が、{} として設定されています。誤ったタイプでは不正確な印刷前オプションとプリセットが適用されます。"/>
+  <translation tag="This removes the plugin&apos;s Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that." ja="プラグインの Moonraker コンポーネントを削除し、Moonraker を再起動します。プリンターは一時的に切断されます。PRINT_START に古いフェーズトラッキングの行が残っている場合、それらも削除されますが、バックアップは保持されます。Klipper を再起動すると、その変更が適用されます。"/>
+  <translation tag="This replaces the printer&apos;s helper macros with the current version and restarts Klipper." ja="プリンターのヘルパーマクロを現在のバージョンに置き換え、Klipper を再起動します。"/>
+  <translation tag="This replaces the printer&apos;s helper macros with the current version. A print is running, so Klipper restarts after it finishes." ja="プリンターのヘルパーマクロを現在のバージョンに置き換えます。印刷中のため、Klipper は印刷完了後に再起動されます。"/>
+  <translation tag="This system does not support bypass mode" ja="このシステムはバイパスモードに対応していません"/>
   <translation tag="This tool probes each bed screw and tells you how much to adjust." ja="このツールは各ベッドネジをプローブし、どのくらい調整が必要かを教えます。"/>
   <translation tag="This will apply the Z-offset to your endstop and restart Klipper to save the configuration. The printer will briefly disconnect." ja="Z-offset をエンドストップに適用し、設定を保存するために Klipper を再起動します。プリンターは一時的に切断されます。"/>
   <translation tag="This will apply the Z-offset to your probe and restart Klipper to save the configuration. The printer will briefly disconnect." ja="Z-offset をプローブに適用し、設定を保存するために Klipper を再起動します。プリンターは一時的に切断されます。"/>
@@ -2629,6 +2648,7 @@
   <translation tag="Unload filament" ja="フィラメントをアンロード"/>
   <translation tag="Unload macro not configured" ja="アンロードマクロが未設定です"/>
   <translation tag="Unload may still be running — response timed out" ja="排出がまだ実行中の可能性があります — 応答タイムアウト"/>
+  <translation tag="Unloaded" ja="排出済み"/>
   <translation tag="Unloading" ja="アンロード中"/>
   <translation tag="Unloading Start Speed" ja="アンロード開始速度"/>
   <translation tag="Unloading before bypass..." ja="バイパス前にアンロード中..."/>
@@ -2854,6 +2874,7 @@
   <translation tag="{} disabled" ja="{} を無効にしました"/>
   <translation tag="{} enabled" ja="{} を有効にしました"/>
   <translation tag="{} failed: {}" ja="{} に失敗しました: {}"/>
+  <translation tag="{} filament" ja="フィラメント {}"/>
   <translation tag="{} filament sensors available" ja="{} 個のフィラメントセンサーが利用可能です"/>
   <translation tag="{} filament • {}" ja="フィラメント {} • {}"/>
   <translation tag="{} heater turned off" ja="{} ヒーターをオフにしました"/>

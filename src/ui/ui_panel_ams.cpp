@@ -7,6 +7,7 @@
 #include "ui_ams_detail.h"
 #include "ui_ams_device_operations_overlay.h"
 #include "ui_ams_environment_overlay.h"
+#include "ui_ams_recover_state_modal.h"
 #include "ui_ams_sidebar.h"
 #include "ui_ams_slot.h"
 #include "ui_ams_slot_layout.h"
@@ -1277,6 +1278,9 @@ void AmsPanel::dispatch_selector_action(helix::ui::AmsSelectorMenu::SelectorActi
         err = backend->execute_device_action("gear_sync", std::any(false));
         break;
     case SA::RECOVER:
+        if (helix::ui::AmsRecoverStateModal::show_owned()) {
+            return;
+        }
         // Re-fetch the backend inside the callback so it cannot dangle if the
         // panel/backend changed while the dialog was open. Feedback comes from
         // the backend action state.
@@ -1417,7 +1421,6 @@ void AmsPanel::show_context_menu(int slot_index, lv_obj_t* near_widget, lv_point
             break;
 
         case helix::ui::AmsContextMenu::MenuAction::SCAN_QR: {
-#if HELIX_HAS_CAMERA
             auto& scanner = helix::ui::get_qr_scanner_overlay();
             scanner.show(parent_screen_, slot, [slot](const SpoolInfo& spool) {
                 AmsBackend* be = AmsState::instance().get_backend();
@@ -1436,7 +1439,6 @@ void AmsPanel::show_context_menu(int slot_index, lv_obj_t* near_widget, lv_point
                 }
                 spdlog::info("[AmsPanel] QR scan assigned spool #{} to slot {}", spool.id, slot);
             });
-#endif // HELIX_HAS_CAMERA
             break;
         }
 

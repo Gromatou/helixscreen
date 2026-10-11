@@ -30,6 +30,7 @@
 #include "printer_state.h"
 #include "system/crash_handler.h"
 #include "system/crash_history.h"
+#include "system/tls_trust.h"
 #include "system/update_checker.h"
 #include "system_settings_manager.h"
 #include "temperature_sensor_manager.h"
@@ -784,7 +785,7 @@ void TelemetryManager::write_update_success_flag(const std::string& config_dir,
     std::string path = config_dir + "/update_success.json";
     std::ofstream ofs(path);
     if (ofs) {
-        ofs << flag.dump();
+        ofs << helix::json_util::safe_dump(flag);
         spdlog::info("[TelemetryManager] Wrote update success flag: {}", path);
     } else {
         spdlog::error("[TelemetryManager] Failed to write update success flag: {}", path);
@@ -957,12 +958,7 @@ void TelemetryManager::do_send(const nlohmann::json& batch) {
         // On devices without a CA cert bundle (e.g., AD5M stock firmware),
         // glibc's NSS resolver can crash with SIGSEGV during SSL handshake.
         if (!ssl_verified_) {
-            const char* cert_file = getenv("SSL_CERT_FILE");
-            const char* cert_dir = getenv("SSL_CERT_DIR");
-            bool have_certs = (cert_file && access(cert_file, R_OK) == 0) ||
-                              (cert_dir && access(cert_dir, R_OK) == 0) ||
-                              access("/etc/ssl/certs/ca-certificates.crt", R_OK) == 0;
-            if (!have_certs) {
+            if (helix::tls::find_ca_store().empty()) {
                 spdlog::warn("[TelemetryManager] No CA certificate bundle found — "
                              "HTTPS requests may fail. Set SSL_CERT_FILE or install "
                              "ca-certificates.");
@@ -992,9 +988,9 @@ void TelemetryManager::do_send(const nlohmann::json& batch) {
             req->content_type = APPLICATION_JSON;
             req->headers["User-Agent"] = std::string("HelixScreen/") + HELIX_VERSION;
             req->headers["X-API-Key"] = API_KEY;
-            req->body = pending.dump();
+            req->body = helix::json_util::safe_dump(pending);
 
-            auto resp = requests::request(req);
+            auto resp = helix::tls::trusted_request(req);
 
             if (shutting_down_.load()) {
                 spdlog::debug("[TelemetryManager] Shutting down, aborting send result processing");
@@ -1159,7 +1155,7 @@ void TelemetryManager::save_queue() const {
         // empty/corrupt queue file if process is killed mid-write
         std::ofstream file(tmp_path);
         if (file.good()) {
-            file << json(queue_).dump(2);
+            file << helix::json_util::safe_dump(json(queue_), 2);
             file.close();
             if (std::rename(tmp_path.c_str(), path.c_str()) != 0) {
                 spdlog::warn("[TelemetryManager] Failed to rename queue temp file: {}",
@@ -2465,7 +2461,7 @@ void TelemetryManager::ensure_device_id() {
 
         std::ofstream file(device_path);
         if (file.good()) {
-            file << data.dump(2);
+            file << helix::json_util::safe_dump(data, 2);
             spdlog::debug("[TelemetryManager] Saved device identity to {}", device_path);
         } else {
             spdlog::error("[TelemetryManager] Failed to write device identity to {}", device_path);
@@ -2959,7 +2955,7 @@ void TelemetryManager::save_snapshot_state() const {
 
     try {
         std::ofstream ofs(tmp_path);
-        ofs << state.dump(2);
+        ofs << helix::json_util::safe_dump(state, 2);
         ofs.close();
         fs::rename(tmp_path, path);
         spdlog::debug("[TelemetryManager] Snapshot state saved to {}", path.string());

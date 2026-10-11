@@ -100,7 +100,7 @@ AmsOperationSidebar::~AmsOperationSidebar() {
 // ============================================================================
 
 void AmsOperationSidebar::register_callbacks_static() {
-    // Must exist before ams_sidebar.xml is parsed — btn_unload binds it. Same
+    // Must exist before ams_sidebar.xml is parsed — the Unload buttons bind it. Same
     // "before the parser sees it" contract as the callbacks below, so it is
     // registered from the same hook.
     init_unload_gating_subject();
@@ -299,10 +299,9 @@ void AmsOperationSidebar::init_observers() {
                 }
             }
 
-            // No bypass feed here: the shared BypassToggleController now
-            // observes the ams_action subject itself (armed only while a
-            // pending unload→enable chain runs), so this sidebar instance
-            // feeding its own controller would process the edge twice.
+            // No bypass feed here: the shared BypassToggleController wakes
+            // itself while a pending unload→enable chain runs, so this sidebar
+            // instance feeding its own controller would settle the chain twice.
 
             // Update step progress (BEFORE updating prev_ams_action_)
             self->update_action_display(action);

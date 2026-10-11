@@ -1042,6 +1042,25 @@ class AmsBackend {
     virtual AmsError recover() = 0;
 
     /**
+     * @brief Re-sync the firmware's tracking to a state the user asserts
+     *
+     * State-only, like clear_fault(): tells the firmware which slot is
+     * selected and whether filament is loaded, without moving anything.
+     * Fields left unset in @p request are not asserted.
+     *
+     * Default implementation returns NOT_SUPPORTED.
+     */
+    virtual AmsError recover_with_state(const helix::RecoverStateRequest& request) {
+        (void)request;
+        return AmsErrorHelper::not_supported("Recover with state not supported");
+    }
+
+    /// @return true if recover_with_state() is implemented
+    [[nodiscard]] virtual bool supports_recover_with_state() const {
+        return false;
+    }
+
+    /**
      * @brief Reset the AMS system (async)
      *
      * Resets the system to a known good state.
@@ -1936,6 +1955,31 @@ class AmsBackend {
      */
     [[nodiscard]] virtual std::vector<helix::printer::DeviceAction> get_device_actions() const {
         return {};
+    }
+
+    /**
+     * @brief G-code that sets clog detection mode, if this backend has the setting.
+     *
+     * @param mode       0 off, 1 manual (fixed detection length), 2 automatic
+     * @param det_length Detection length in mm, sent in manual mode when positive
+     * @return The command, or nullopt when the backend has no such setting
+     */
+    [[nodiscard]] virtual std::optional<std::string>
+    clog_detection_mode_gcode(int mode, float det_length) const {
+        (void)mode;
+        (void)det_length;
+        return std::nullopt;
+    }
+
+    /**
+     * @brief The detection length (mm) a manual clog mode write sets, as the
+     *        printer is configured.
+     *
+     * @return nullopt when the backend reports none; callers then show the
+     *         live encoder length
+     */
+    [[nodiscard]] virtual std::optional<float> clog_detection_length_setting() const {
+        return std::nullopt;
     }
 
     /**

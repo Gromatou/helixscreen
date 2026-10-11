@@ -91,6 +91,7 @@ struct ThemePalette {
     lv_color_t danger{};
     lv_color_t focus{};
     int border_radius = 8;
+    int button_radius = 8;
     int border_width = 1;
     int border_opacity = 40;
     int shadow_width = 0;
@@ -675,9 +676,9 @@ lv_color_t theme_manager_get_contrast_color(lv_color_t bg_color);
  * @brief Get a foreground guaranteed readable on a saturated fill
  *
  * Returns pure black or pure white, whichever has the higher WCAG contrast
- * ratio against @p fill. Use this for content drawn on an accent fill — a
- * primary-filled button or pill, a colored badge — where the fill is chosen for
- * emphasis rather than as a background tone.
+ * ratio against @p fill. Use this when pure maximum contrast matters more
+ * than keeping the theme's tint — non-text chrome such as divider lines, or
+ * the fallback when a tinted colour cannot reach the contrast bar.
  *
  * Deliberately NOT theme_manager_get_contrast_color(). That one answers a
  * different question: it hands back the palette's own text color for the
@@ -691,6 +692,59 @@ lv_color_t theme_manager_get_contrast_color(lv_color_t bg_color);
  * @return Black or white, whichever reads better on @p fill
  */
 lv_color_t theme_manager_get_readable_on(lv_color_t fill);
+
+/// Contrast a text colour must reach on its fill: 4:1, between WCAG AA
+/// large-text (3:1) and AA body text (4.5:1). Around fill luminance 0.18 no
+/// colour at all reaches 4.5, and light text is capped below 4.5 on every fill
+/// above 0.183, so a 4.5 bar would leave a light palette no way to keep its
+/// tint on its accents.
+// NAMESPACE_OK: joins this header's global theme_manager_* free-function API
+inline constexpr double kThemeTextContrastThreshold = 4.0;
+
+/**
+ * @brief Shift a palette text colour just enough to read on a fill
+ *
+ * Keeps the theme's own text colour wherever it already clears a 4:1 WCAG
+ * contrast ratio against @p fill (returned byte-for-byte). Otherwise blends
+ * @p text toward the pole on its own side of the fill — light text toward
+ * white, dark text toward black — by the smallest amount that reaches 4:1,
+ * so the theme's tint survives instead of snapping to pure black or white.
+ * When no colour on the text's own side can reach 4:1, falls back to
+ * theme_manager_get_readable_on().
+ *
+ * Use this for text and text-coloured glyphs on an accent fill where the
+ * palette's text colour is the intended starting point.
+ *
+ * @param text Palette text colour intended for this context
+ * @param fill Background fill the text sits on
+ * @return @p text unchanged, or the nearest tint toward its pole that clears 4:1
+ */
+// NAMESPACE_OK: joins this header's global theme_manager_* free-function API
+lv_color_t theme_manager_get_contrast_adjusted_text(lv_color_t text, lv_color_t fill);
+
+/**
+ * @brief Contrast helper for a fill drawn below full opacity
+ *
+ * A translucent fill lands on screen as a mix of its own colour and whatever
+ * is behind it, so contrast must be judged against that composite, not the
+ * raw fill colour. Composites @p fill over @p backing at @p fill_opa and
+ * hands the result to the opaque-fill overload.
+ *
+ * Use this wherever an object's bg_opa sits below LV_OPA_COVER (chrome
+ * pills, scrims, badges). Contrast computed against the raw fill of a
+ * translucent object answers a colour that never reaches the screen.
+ *
+ * @param text Palette text colour intended for this context
+ * @param fill Fill colour as set on the object
+ * @param backing Colour the fill is drawn over
+ * @param fill_opa Opacity the fill is drawn at
+ * @param min_ratio WCAG ratio the result must reach on the composited fill
+ * @return Colour readable on the fill as it actually renders
+ */
+// NAMESPACE_OK: joins this header's global theme_manager_* free-function API
+lv_color_t theme_manager_get_contrast_adjusted_text(lv_color_t text, lv_color_t fill,
+                                                    lv_color_t backing, lv_opa_t fill_opa,
+                                                    double min_ratio = kThemeTextContrastThreshold);
 
 /**
  * @brief Apply palette colors to a single widget based on its type

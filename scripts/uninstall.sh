@@ -23,8 +23,10 @@ set -e
 GITHUB_REPO="prestonbrown/helixscreen"
 SERVICE_NAME="helixscreen"
 
-# Previous UIs we may need to re-enable (for scanning)
-PREVIOUS_UIS="guppyscreen GuppyScreen featherscreen FeatherScreen klipperscreen KlipperScreen"
+# Previous UIs we may need to re-enable (for scanning). qidi-client and
+# makerbase-client are the QIDI stock screen units. The Sovol mksclient is left
+# out: it is a bare binary, and a restored UI gets run with `start`.
+PREVIOUS_UIS="guppyscreen GuppyScreen featherscreen FeatherScreen klipperscreen KlipperScreen qidi-client makerbase-client"
 
 
 # ============================================
@@ -563,12 +565,8 @@ kill_process_by_name() {
 #
 # Reads: KLIPPER_HOME, SUDO, HELIX_STATE_VAR_LIB, HELIX_STATE_ROOT_HOME
 retire_legacy_config_backups() {
-    local state_var_lib="${HELIX_STATE_VAR_LIB:-/var/lib/helixscreen}"
-    local state_root_home="${HELIX_STATE_ROOT_HOME:-/root/.helixscreen}"
-
     local tier
-    for tier in "$state_var_lib" "$state_root_home" "${KLIPPER_HOME:+${KLIPPER_HOME}/.helixscreen}"; do
-        [ -n "$tier" ] || continue
+    config_backup_tiers | while IFS= read -r tier; do
         [ -f "${tier}/helixconfig.json.backup" ] || continue
         # The gate: no current backup means the legacy file is still load-bearing.
         [ -f "${tier}/settings.json.backup" ] || continue
@@ -577,6 +575,24 @@ retire_legacy_config_backups() {
             log_info "Removed superseded config backup: ${tier}/helixconfig.json.backup"
         fi
     done
+}
+
+# The directories Config::init searches for a rolling settings backup, one per
+# line: the StateDirectory, then each HOME/.helixscreen the service may run with
+# (config_backup_primary/fallback, include/app_constants.h).
+# Reads: KLIPPER_HOME, HELIX_STATE_VAR_LIB, HELIX_STATE_ROOT_HOME
+config_backup_tiers() {
+    echo "${HELIX_STATE_VAR_LIB:-/var/lib/helixscreen}"
+    echo "${HELIX_STATE_ROOT_HOME:-/root/.helixscreen}"
+    [ -n "${KLIPPER_HOME:-}" ] && echo "${KLIPPER_HOME}/.helixscreen"
+    return 0
+}
+
+# The rolling settings backup file names Config::init restores from, in its
+# priority order (config_backup_search_paths, src/system/config.cpp).
+config_backup_names() {
+    echo "settings.json.backup"
+    echo "helixconfig.json.backup"
 }
 
 clean_helix_state_dirs() {
@@ -1591,7 +1607,7 @@ set_install_paths() {
 # These are the files users may want to edit from Fluidd/Mainsail, and that
 # the app writes to at runtime. All other files in INSTALL_DIR/config/ are
 # static assets reinstalled on each update.
-HELIX_USER_CONFIG_FILES="settings.json helixscreen.env .disabled_services tool_spools.json crash_history.json"
+HELIX_USER_CONFIG_FILES="settings.json helixscreen.env .disabled_services tool_spools.json crash_history.json user_filaments.json"
 
 # User-writable config DIRECTORIES that live in printer_data/config/helixscreen/.
 #
@@ -1622,6 +1638,7 @@ HELIX_USER_CONFIG_DIRS="custom_images themes printer_database.d"
 _helix_config_file_seed() {
     case "$1" in
         crash_history.json) printf '[]\n' ;;   # CrashHistory::load() expects a JSON array
+        user_filaments.json) printf '[]\n' ;;  # FilamentCatalog reads a bare array as no products
         *) return 1 ;;
     esac
 }
@@ -3261,6 +3278,18 @@ _sed_inplace() {
     $SUDO sed -i '' "$pattern" "$file" 2>/dev/null || true
 }
 
+# Fill the install-path placeholders (@@INSTALL_DIR@@, @@INSTALL_PARENT@@) in
+# installed unit files. config/refresh-service-units.sh does the same on the
+# device, where this library is not shipped.
+# Args: UNIT_FILE...   Reads: INSTALL_DIR, SUDO
+_template_install_paths() {
+    local install_dir="${INSTALL_DIR:-/opt/helixscreen}" install_parent f
+    install_parent="$(dirname "$install_dir")"
+    for f in "$@"; do
+        _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g; s|@@INSTALL_PARENT@@|${install_parent}|g" "$f"
+    done
+}
+
 # Returns true if this process is running under the NoNewPrivileges systemd constraint.
 # When helix-screen self-updates, it spawns install.sh as a child process.  The
 # helixscreen.service unit has NoNewPrivileges=true, so ALL sudo calls in install.sh
@@ -3641,15 +3670,10 @@ install_service_systemd() {
     # `mks` user has no `mks` group and systemd refuses to spawn the unit.
     local helix_user="${KLIPPER_USER:-root}"
     local helix_group="${KLIPPER_GROUP:-${KLIPPER_USER:-root}}"
-    local install_dir="${INSTALL_DIR:-/opt/helixscreen}"
-
-    local install_parent
-    install_parent="$(dirname "${install_dir}")"
 
     _sed_inplace "s|@@HELIX_USER@@|${helix_user}|g" "$service_dest"
     _sed_inplace "s|@@HELIX_GROUP@@|${helix_group}|g" "$service_dest"
-    _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$service_dest"
-    _sed_inplace "s|@@INSTALL_PARENT@@|${install_parent}|g" "$service_dest"
+    _template_install_paths "$service_dest"
 
     if ! $SUDO systemctl daemon-reload; then
         log_error "Failed to reload systemd daemon."
@@ -3665,10 +3689,10 @@ install_service_systemd() {
 
 # During self-update, check if the deployed update-watcher path unit has the
 # old PathExists directive (which causes infinite restart loops) and fix it.
-# The watcher units have no platform customizations — only @@INSTALL_DIR@@.
+# The watcher units have no platform customizations, only install-path placeholders.
 # Under NoNewPrivileges we can't write to /etc/systemd/system/ or run
 # systemctl daemon-reload, so we rely on helixscreen-update.service's
-# ExecStartPre to refresh the main service file on next Moonraker update.
+# ExecStart script to refresh the main service file on next Moonraker update.
 # However, the PATH unit itself won't get refreshed that way, so we attempt
 # a direct fix here and fall back to a warning if permissions block it.
 update_watcher_if_stale() {
@@ -3700,8 +3724,6 @@ update_watcher_if_stale() {
     local path_src="${INSTALL_DIR}/config/helixscreen-update.path"
     local svc_src="${INSTALL_DIR}/config/helixscreen-update.service"
     local install_dir="${INSTALL_DIR:-/opt/helixscreen}"
-    local install_parent
-    install_parent="$(dirname "$install_dir")"
 
     if _has_no_new_privs; then
         # Can't write to /etc/systemd/system/ under NoNewPrivileges.
@@ -3712,9 +3734,8 @@ update_watcher_if_stale() {
         fi
         if [ -f "$svc_src" ] && [ -f "$svc_dest" ]; then
             if cp "$svc_src" "$svc_dest" 2>/dev/null; then
-                sed -i -e "s|@@INSTALL_DIR@@|${install_dir}|g" \
-                       -e "s|@@INSTALL_PARENT@@|${install_parent}|g" \
-                    "$svc_dest" 2>/dev/null
+                # sudo is blocked under NoNewPrivileges, so write directly.
+                ( SUDO=""; _template_install_paths "$svc_dest" )
                 fixed=true
             fi
         fi
@@ -3731,10 +3752,7 @@ update_watcher_if_stale() {
     if [ -f "$path_src" ] && [ -f "$svc_src" ]; then
         $SUDO cp "$path_src" "$path_dest"
         $SUDO cp "$svc_src" "$svc_dest"
-        _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$path_dest"
-        _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$svc_dest"
-        _sed_inplace "s|@@INSTALL_PARENT@@|${install_parent}|g" "$path_dest"
-        _sed_inplace "s|@@INSTALL_PARENT@@|${install_parent}|g" "$svc_dest"
+        _template_install_paths "$path_dest" "$svc_dest"
         $SUDO systemctl daemon-reload 2>/dev/null || true
         $SUDO systemctl restart helixscreen-update.path 2>/dev/null || true
         log_success "Updated watcher units ($reason)"
@@ -3753,14 +3771,9 @@ install_update_watcher_systemd() {
         return 0
     fi
 
-    local install_dir="${INSTALL_DIR:-/opt/helixscreen}"
-
     $SUDO cp "$path_src" "$path_dest"
     $SUDO cp "$svc_src" "$svc_dest"
-
-    # Template the install directory path in both units
-    _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$path_dest"
-    _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$svc_dest"
+    _template_install_paths "$path_dest" "$svc_dest"
 
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable helixscreen-update.path 2>/dev/null || true
@@ -4255,8 +4268,20 @@ has_update_manager_section() {
     grep -q '^\[update_manager helixscreen\]' "$conf" 2>/dev/null
 }
 
+# The channel Moonraker's type:web updater should follow. Moonraker accepts
+# only stable and beta here; the dev channel has no Moonraker lane and rides
+# beta, the closest published feed.
+update_manager_web_channel() {
+    case "${R2_CHANNEL:-stable}" in
+        beta | dev) echo "beta" ;;
+        *) echo "stable" ;;
+    esac
+}
+
 # Generate update_manager configuration block
 generate_update_manager_config() {
+    local web_channel
+    web_channel=$(update_manager_web_channel)
     cat << EOF
 
 # HelixScreen Update Manager
@@ -4266,7 +4291,7 @@ generate_update_manager_config() {
 # A systemd path unit handles service restart after Moonraker extracts the update.
 [update_manager helixscreen]
 type: web
-channel: stable
+channel: ${web_channel}
 repo: prestonbrown/helixscreen
 path: ${INSTALL_DIR}
 EOF
@@ -4486,6 +4511,45 @@ disable_system_updates_on_buildroot() {
 # Options like persistent_files, managed_services, and install_script are
 # not supported and cause Moonraker to log "unparsed config option" warnings.
 # Args: $1 = moonraker.conf path
+# Point an existing stanza's `channel:` at the channel this install resolved.
+# The value is interpolated when the section is first added and nothing
+# revisits it, so a user who switches the app to beta keeps being offered
+# stable from Mainsail/Fluidd until the stanza is rewritten.
+# Args: $1 = moonraker.conf path
+sync_update_manager_channel() {
+    local conf="$1"
+    local current want
+
+    want=$(update_manager_web_channel)
+
+    current=$(awk '
+        /^\[update_manager helixscreen\]/ { found=1; next }
+        found && /^\[/ { exit }
+        found && /^channel:/ { sub(/^channel:[[:space:]]*/, ""); print; exit }
+    ' "$conf" 2>/dev/null)
+
+    # A stanza without a channel line (hand-written) is Moonraker's default
+    # stable; leave it to the operator rather than inserting one.
+    if [ -z "$current" ] || [ "$current" = "$want" ]; then
+        return 0
+    fi
+
+    log_info "Updating update_manager channel: ${current} -> ${want}"
+    local fs
+    fs=$(file_sudo "$conf")
+    $fs cp "$conf" "${conf}.bak.helixscreen" 2>/dev/null || true
+
+    $fs awk -v want="$want" '
+        /^\[update_manager helixscreen\]/ { in_section=1 }
+        in_section && /^\[/ && !/^\[update_manager helixscreen\]/ { in_section=0 }
+        in_section && /^channel:/ { print "channel: " want; next }
+        { print }
+    ' "$conf" > "${conf}.tmp" && $fs mv "${conf}.tmp" "$conf"
+
+    log_success "update_manager channel now ${want}"
+    _UPDATE_MANAGER_SYNCED=yes
+}
+
 cleanup_unsupported_options() {
     local conf="$1"
 
@@ -4769,6 +4833,12 @@ configure_moonraker_updates() {
 
     if has_update_manager_section "$conf"; then
         log_info "update_manager section already exists in $conf"
+        # Set by sync_update_manager_channel; Moonraker reads its config only at
+        # startup, so a rewritten stanza needs a restart before Mainsail sees it.
+        _UPDATE_MANAGER_SYNCED=""
+        # channel: is only ever written when the section is first added, so
+        # rewrite it to whatever this update resolved to.
+        sync_update_manager_channel "$conf"
         # Remove options not supported by type: web (persistent_files,
         # managed_services, install_script) that cause Moonraker warnings.
         cleanup_unsupported_options "$conf"
@@ -4776,6 +4846,9 @@ configure_moonraker_updates() {
         disable_system_updates_on_buildroot "$conf"
         # Still ensure asvc is correct even if section already exists
         ensure_moonraker_asvc "$conf"
+        if [ "$_UPDATE_MANAGER_SYNCED" = "yes" ]; then
+            restart_moonraker
+        fi
         return 0
     fi
 
@@ -5838,6 +5911,27 @@ _disabled_services_ledger_candidates() {
     done
 }
 
+# Enable a unit for the next boot. A failure is reported with the command that
+# fixes it by hand, and does not stop the uninstall: what follows still has to run.
+enable_unit_or_warn() {
+    if ! $SUDO systemctl enable "$1" 2>/dev/null; then
+        log_warn "Could not re-enable $1. Run: sudo systemctl enable --now $1"
+    fi
+}
+
+# Remove the QIDI .3mf thumbnail helper units (prestonbrown/helixscreen#1713).
+# The helper script itself ships in $INSTALL_DIR/config/ and rides the install
+# dir's removal out; the generated PNGs under gcodes/.thumbs stay. No-op when
+# the units are absent (they are only installed on QIDI-class systemd hosts).
+uninstall_qidi_3mf_thumbs() {
+    $SUDO systemctl stop helixscreen-3mf-thumbs.path 2>/dev/null || true
+    $SUDO systemctl disable helixscreen-3mf-thumbs.path 2>/dev/null || true
+    $SUDO systemctl disable helixscreen-3mf-thumbs.service 2>/dev/null || true
+    $SUDO rm -f /etc/systemd/system/helixscreen-3mf-thumbs.path
+    $SUDO rm -f /etc/systemd/system/helixscreen-3mf-thumbs.service
+    return 0
+}
+
 # Re-enable services that were disabled during installation
 # Reads the state file and reverses each recorded disable action
 #
@@ -5878,7 +5972,7 @@ reenable_disabled_services() {
         case "$type" in
             systemd)
                 log_info "Re-enabling systemd service: $target"
-                $SUDO systemctl enable "$target" 2>/dev/null || true
+                enable_unit_or_warn "$target"
                 HELIX_REENABLED_UNITS="${HELIX_REENABLED_UNITS} ${target}"
                 ;;
             sysv-chmod)
@@ -6229,6 +6323,7 @@ uninstall() {
         $SUDO systemctl disable helixscreen-update.path 2>/dev/null || true
         $SUDO rm -f /etc/systemd/system/helixscreen-update.path
         $SUDO rm -f /etc/systemd/system/helixscreen-update.service
+        uninstall_qidi_3mf_thumbs
         # Remove permission rules (udev, polkit)
         $SUDO rm -f /etc/udev/rules.d/99-helixscreen-backlight.rules
         $SUDO rm -f /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla
@@ -6488,6 +6583,7 @@ clean_old_installation() {
     $SUDO systemctl disable helixscreen-update.path 2>/dev/null || true
     $SUDO rm -f /etc/systemd/system/helixscreen-update.path
     $SUDO rm -f /etc/systemd/system/helixscreen-update.service
+    uninstall_qidi_3mf_thumbs
     # Remove permission rules (udev, polkit)
     $SUDO rm -f /etc/udev/rules.d/99-helixscreen-backlight.rules
     $SUDO rm -f /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla
@@ -6612,7 +6708,7 @@ reenable_previous_ui() {
         if [ "$INIT_SYSTEM" = "systemd" ]; then
             if systemctl list-unit-files "${ui}.service" >/dev/null 2>&1; then
                 log_info "Found previous UI (systemd): $ui"
-                $SUDO systemctl enable "$ui" 2>/dev/null || true
+                enable_unit_or_warn "$ui"
                 if $SUDO systemctl start "$ui" 2>/dev/null; then
                     log_success "Re-enabled and started: $ui"
                     found_ui=true

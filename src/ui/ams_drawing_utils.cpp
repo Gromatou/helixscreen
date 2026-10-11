@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <map>
+#include <numeric>
 #include <set>
 
 namespace ams_draw {
@@ -659,6 +660,17 @@ SystemToolLayout compute_system_tool_layout(const AmsSystemInfo& info, const Ams
         }
     }
 
+    std::vector<int> order_key(result.units.size(), 0);
+    for (size_t u = 0; u < result.units.size(); ++u) {
+        const auto& utl = result.units[u];
+        order_key[u] =
+            utl.tool_count > 0 ? utl.first_physical_tool : (u > 0 ? order_key[u - 1] : 0);
+    }
+    result.display_order.resize(result.units.size());
+    std::iota(result.display_order.begin(), result.display_order.end(), 0);
+    std::stable_sort(result.display_order.begin(), result.display_order.end(),
+                     [&order_key](int a, int b) { return order_key[a] < order_key[b]; });
+
     // Physical→extruder-name map. Positions no branch could identify stay empty.
     result.physical_to_extruder_name.assign(total_physical, std::string());
     for (const auto& [phys, name] : physical_extruder_names) {
@@ -974,7 +986,11 @@ lv_obj_t* create_lane_badge(lv_obj_t* parent, int lane_number, int32_t size, boo
     const lv_font_t* f = theme_manager_get_font("font_xs");
     if (f)
         lv_obj_set_style_text_font(lbl, f, LV_PART_MAIN);
-    lv_obj_set_style_text_color(lbl, theme_manager_get_color("text"), LV_PART_MAIN);
+    // Both fills are accents, so the number starts from the palette text colour and
+    // shifts toward its pole as 4:1 needs
+    lv_obj_set_style_text_color(
+        lbl, theme_manager_get_contrast_adjusted_text(theme_manager_get_color("text"), bg),
+        LV_PART_MAIN);
     lv_obj_center(lbl);
     lv_obj_add_flag(lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
     return badge;

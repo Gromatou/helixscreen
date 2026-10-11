@@ -5,6 +5,560 @@ All notable changes to HelixScreen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-10-08
+
+<!-- whatsnew
+- Happy Hare v4 support
+- K2 filament cuts no longer drive the toolhead into the frame
+- USB prints copy the file to the printer first
+- Spoolman temperature, spool weight and active-spool fixes
+- Fixes for crashes at boot with a labeled USB stick and when closing the macro wizard
+- Saved brightness and screen rotation apply at startup
+-->
+
+### Added
+
+- **Happy Hare v4 support** (#1479) - Happy Hare 4 rigs now work end to end. Bypass is shown
+  only when a unit really has one, per-gate entry sensors read correctly, multi-unit machines
+  get the commands they need (home, motors, servo, gate calibration, per-unit heaters), and
+  tunables are read from the new split config sections. Settings a unit's hardware cannot take
+  are skipped instead of erroring, and stale readings clear when a unit has no buffer or
+  encoder. The clog and gear settings now use the parameter names your Happy Hare release
+  expects, so the clog screen works on every version.
+
+### Changed
+
+- **Android builds target API 36**, as Google Play requires.
+
+### Fixed
+
+**Stability**
+
+- **K2 filament cuts no longer drive the toolhead into the frame** - unload, swap and the
+  bypass fallback sent a bare cutter command from the purge chute, which crashed a K2 Pro's
+  head into the frame, and the uncut filament was then pulled back. Every K2 cut now goes
+  through the box's own positioned cut, as Creality's tool change does.
+- **Crash at boot with a labeled USB stick on K1** (#1746) - the volume label was read after
+  its memory was freed, which crashed the app on every start and tripped the crash-loop guard.
+- **Crash closing the macro enhancement wizard** (#1762) - the close and cancel buttons used
+  the wizard after it had been freed.
+- **Crash when a dialog closed with animations off** - the dialog's contents could be freed in
+  the wrong order, which showed up as a restart on the buffer status screen.
+- **Memory read past the end in the G-code preview on Raspberry Pi 3B** - once the viewer grew
+  larger than its cached frame, drawing could read beyond the image.
+
+**Printing and files**
+
+- **Reprint starts the original file** - after a print that ran from a temporary rewritten copy,
+  Reprint failed with "Unable to open file".
+- **USB files are copied to the printer before printing** - the USB tab used to hand the printer
+  only the file name, so a print worked only if a same-named file already existed. Print now
+  uploads the file (reusing an identical copy) and prints that, with its colors and thumbnail.
+- **Delete is hidden for USB files** - it could remove a same-named file on the printer instead
+  of the one on the stick.
+- **Print thumbnail for prints in a subfolder** - the active-print thumbnail no longer fails
+  to load.
+- **QIDI .3mf prints keep their thumbnail** - a .3mf with no extracted G-code no longer
+  downloads the whole archive, and a late reply for a previous file leaves the current
+  preview alone.
+- **The excluded-objects list keeps its scroll position** - it no longer jumps back to the top
+  each time the printing object changes.
+- **Temperature graph after a Klipper restart** - the nozzle line no longer freezes flat.
+- **Pre-print status** - the empty bed mesh Klipper and Kalico report is read as "no mesh", so
+  the mesh step is detected correctly.
+- **Snapmaker U1 spaghetti warning appears when the code arrives after the pause** - the modal
+  no longer gets skipped, and a detection pause wakes a sleeping display.
+
+**Filament systems**
+
+- **Spoolman active spool (#1717)** - editing an idle lane no longer takes the active spool
+  away from the lane feeding the toolhead.
+- **AFC spool unlink survives reconnect and restart** (#1717) - an unlinked spool stays
+  unlinked.
+- **Spoolman temperatures and spool weight** - Spoolman's single temperature value is read
+  properly (ranges no longer show 0), the spool wizard sends data Spoolman accepts, and
+  editing a spool's weight changes the spool instead of its filament.
+- **A deleted Spoolman spool reads as no spool**, not as an unreachable server.
+- **Spool assignments are kept per printer** - switching printers no longer copies one
+  printer's spools into another's database.
+- **Spool picker shows spool names on large screens.**
+- **Tool badge on multi-system rigs** - a lane on a secondary filament system shows its own
+  tool number.
+- **Changing printers clears the old filament system** - the Multi-Filament card and lane
+  colors from the previous printer no longer linger.
+- **CFS** (#1464, #1761) - stock box updates that report only changed units no longer drop the
+  others, and action completion no longer races status updates. Chained CFS and QIDI Box
+  units draw one toolhead in the overview, and cards are ordered by address.
+
+**Printers and display**
+
+- **Snapmaker U1 SSH after reboot** - SSH starts again at boot when the stock Root Access
+  setting is on.
+- **Saved brightness applies at startup** instead of 100%.
+- **Screen rotation survives a restart from Settings** - the watchdog used to relaunch at the
+  old angle.
+- **Creator 5 no longer detected as Z-Mod** (#1754).
+- **K2 camera** (#1670) - the camera service keeps reclaiming the camera from a late-starting
+  stock camera app.
+- **Touch on DSI panels** - an honest transposed-looking touch range, such as Waveshare 2.8in
+  DSI, corrects itself, and a range solved unrotated stays live on a rotated display.
+- **Touch calibration on fresh installs** isn't flagged for recheck unnecessarily.
+- **Multi-printer names** - a printer not yet connected shows its host instead of printer-N,
+  and renaming starts from the saved name.
+- **Leaving Change Host after Test reconnects the saved printer.**
+
+**Installer and updates**
+
+- **Android Update button** - a sideloaded install opens the GitHub release page instead of a
+  Play Store listing that does not exist yet.
+- **Beta channel is applied reliably** - installing a prerelease now sets the in-app update
+  channel too, including on older BusyBox systems, and the choice survives settings backups.
+  `--version` finds its manifest in any channel, and installing a local archive never moves
+  the channel.
+- **settings.json is written safely** - atomic writes that keep its permissions and symlink,
+  and an unparseable file is left for the app to recover rather than replaced.
+- **Moonraker restarts when its update entry is rewritten**, so Mainsail shows the right feed.
+- **Update service skips cleanly** - benign skips no longer leave the unit marked failed, and
+  a fresh install's update watcher paths are filled in.
+
+## [1.0.3] - 2026-10-04
+
+### Changed
+
+- **Belt Tension is withdrawn from 1.0** - the sweep read its accelerometer data from a
+  folder Klipper never writes to, so it failed on every printer
+  ([#1721](https://github.com/prestonbrown/helixscreen/issues/1721)).
+- **The log records more by default** - production builds log at Info and write each line
+  to the log file as it happens, so a log taken right after a problem already holds what
+  happened.
+
+### Fixed
+
+**Stability**
+
+- **Raspberry Pi OS 32-bit no longer crashes with heap corruption** - the pi32 build used the
+  system's C++ runtime, which is built for an older CPU generation and keeps its bookkeeping
+  differently from what the app expected, so ordinary file listing wrote into freed memory
+  (`malloc(): unsorted double linked list corrupted`). pi32 builds now carry their own
+  runtime, which adds about 1 MB to the package
+  ([#1732](https://github.com/prestonbrown/helixscreen/issues/1732)).
+- **An unusual character in a name no longer loses a save** - a Wi-Fi network, printer or
+  file name containing bytes that are not valid text could crash the app or silently drop
+  the settings save. Those bytes are now replaced and the save goes through.
+- **The file list no longer floods slow printers with rescans** - the print list asked
+  Moonraker to rescan a file's metadata on every miss, and on a slow host the queue starved
+  the screen's own requests. One scan runs at a time, and a file that keeps failing waits 10
+  minutes before it is tried again.
+
+**Printing and filament systems**
+
+- **Several CFS units on community CFS firmware show one card per unit** - with two or more
+  boxes chained, every lane was drawn in one long row with overlapping labels. Each box is
+  now its own unit, so the multi-filament overview opens with one card per CFS.
+- **The file detail view no longer freezes the screen on large G-code files** - backing out
+  while the preview was still building waited out the whole build on the interface thread,
+  which could take many seconds on a large print. Cancelling now stops the indexing,
+  geometry and cache work promptly instead
+  ([#1706](https://github.com/prestonbrown/helixscreen/issues/1706)).
+- **File thumbnails on printers without file metadata stay bounded** - if Moonraker ignores
+  range requests and answers a small header read with the whole G-code file, the download
+  stops once the requested bytes have arrived
+  ([#1706](https://github.com/prestonbrown/helixscreen/issues/1706)).
+- **Pre-print status on the Snapmaker U1 shows each real step** - the preparation screen
+  used to sit on one label for most of the run: "Priming..." replaced every step from the
+  first toolhead move until the first layer, and a step following an earlier related one
+  (probing Z after homing the axes, bed mesh and plate detection after the bed inspection)
+  kept showing the first step's name instead of its own. Each step now shows as it happens:
+  homing, probing Z, bed mesh, plate detection.
+- **The heat-first warning checks the slot you selected** - with a cold nozzle, Load and
+  Unload warn about, or preheat for, the material of the slot the operation acts on, not
+  whichever spool happens to be loaded or on the external holder. Purge, Extrude and
+  Retract use the loaded lane's material.
+- **Happy Hare: Recover sets the real gate and whether filament is loaded** - Recover opens
+  a dialog to pick the gate that is really selected and whether filament is loaded,
+  instead of a bare `MMU_RECOVER` that could leave the position Unknown. The error popup's
+  own Recover sends a plain `MMU_RECOVER` and lets Happy Hare detect, where it used to send
+  an `UNLOADED=1` Happy Hare does not accept.
+- **Bypass could stay unavailable after an unload** - the filament path now settles on the
+  system's own state, so bypass becomes available once an unload finishes, including one
+  that ends with a CFS cut ([#1512](https://github.com/prestonbrown/helixscreen/issues/1512)).
+- **Device operation messages said "AFC" on every filament system** - homing, recovering and
+  aborting now read the same on Happy Hare and every other system.
+- **The Change Filament spool picker tells two spools of one vendor apart** - each row now
+  carries Spoolman's filament name.
+- **Your Material Temperatures edits survive a Moonraker update** - `user_filaments.json`
+  now lives in your config directory, linked into printer_data, instead of the install
+  directory a Moonraker web update replaces.
+- **Scan QR opens the barcode scanner on printers built without a camera** - on the AD5X,
+  AD5M, K1, K2, CC1 and U1 the button did nothing ([#1726](https://github.com/prestonbrown/helixscreen/issues/1726)).
+
+**Files and history**
+
+- **.gcode.3mf files keep their thumbnail, layer height and pre-print checks** in the file
+  details, and their names show without either extension ([#1713](https://github.com/prestonbrown/helixscreen/issues/1713)).
+- **Print history reads more jobs correctly** - it translates the job status, finds
+  thumbnails for files in subfolders, ages a job with no end time by its start, and reads
+  number fields Moonraker sends as text ([#1713](https://github.com/prestonbrown/helixscreen/issues/1713)).
+- **The home screen's last-print tile** words an unfinished job by its status and hides
+  stats that are zero ([#1713](https://github.com/prestonbrown/helixscreen/issues/1713)).
+
+**Updates**
+
+- **Updates, crash reports and debug-bundle uploads verify the server's certificate** - every
+  release package ships its own certificate bundle, so printers whose system certificates
+  are years out of date still connect.
+- **Updates follow your update channel** - the installer and Moonraker's update manager use
+  the beta or dev channel you picked instead of always pulling stable.
+- **Installing the Moonraker plugin from the screen works on installed releases** - the
+  release package now includes the plugin.
+- **Mainsail shows the new version after an update** - the first start after an update asks
+  Moonraker to refresh it ([#1727](https://github.com/prestonbrown/helixscreen/issues/1727)).
+- **An update restarts HelixScreen through systemd**, so the service picks up its updated
+  unit files ([#1713](https://github.com/prestonbrown/helixscreen/issues/1713)), and the restart no longer fails when `~/.helixscreen` is missing.
+
+**Screen and input**
+
+- **Screen rotation at 90 or 270 degrees on DRM displays draws correctly** - the picture is
+  rotated once, in software, instead of being handed to a display plane that could not lay
+  it out ([#1275](https://github.com/prestonbrown/helixscreen/issues/1275)).
+- **Home screen text follows a language change** - fan, nozzle, spool, camera, preheat and
+  print-stats labels switch language with the rest of the screen instead of staying in the
+  old one.
+- **The last-print card keeps its thumbnail** - it retries when you return to the home
+  screen and keeps its picture when the print's details are re-read.
+- **Scroll Guard works again** - with the post-scroll click guard turned on, a tap right
+  after a scroll no longer goes through on the printer's touchscreen. Changing the setting
+  needs a restart.
+- **The Full corner radius no longer turns dialogs into circles** - buttons still round into
+  pills, while cards, dialogs and inputs stop at a pill-shaped radius.
+
+## [1.0.2] - 2026-09-25
+
+<!-- whatsnew
+The second patch release on the 1.0 line.
+
+Display sleep is fixed: panels that wedged, glowed or showed a test pattern on AD5X, U1,
+K1, K2 and Pi DSI now sleep by turning the backlight off, and the screen comes back
+properly on wake. Several crashes are gone, including the K1 blank-screen crash and
+crashes after a printer switch. QIDI printers get their .3mf thumbnails back.
+-->
+
+The second patch release on the 1.0 line. The headline is display sleep: 1.0.1 powered the
+panel down alongside the backlight, and on several boards that wedged the panel or lit it
+up instead of turning it off. 1.0.2 goes back to switching the backlight off and powering
+the panel down only where there is no backlight to switch. The rest is mostly stability,
+on K1 class boards and around printer switching, plus QIDI install fixes and readable text
+on coloured buttons.
+
+### Added
+
+- **The filament mapping chip names the material** - the top band of each tool's chip
+  shows the file's material for that tool (PLA, ASA) on the tool's colour, falling back
+  to the tool number when the file names none.
+
+### Fixed
+
+**Display sleep and backlight**
+
+- **Sleep turns the backlight off and leaves the panel powered** - powering the panel down
+  alongside a working backlight wedged or lit up panels on AD5X, U1, K1 and K2 (the K2
+  Plus glowed and flickered white at the edges) and showed a colour test pattern on a Pi 4
+  DSI screen. Sleep now switches the backlight off, and powers the panel down only on
+  boards with no backlight control. `/display/panel_power_off` turns panel power-off back
+  on for a screen that needs it
+  ([#1594](https://github.com/prestonbrown/helixscreen/issues/1594),
+  [#1708](https://github.com/prestonbrown/helixscreen/issues/1708)).
+- **Waking from sleep brings the screen fully back** - after dimming, then the screensaver,
+  then sleep, the panel on screen woke up frozen: its live values and timers stayed
+  stopped, and every later screensaver skipped pausing it.
+- **The K2 brightness slider no longer blacks out the screen at its low end** - the lowest
+  settings map onto the panel's visible range, with a `/display/backlight_floor_percent`
+  setting for other panels that go dark early
+  ([#1709](https://github.com/prestonbrown/helixscreen/issues/1709)).
+- **No false "Failed to load G-code preview"** when a print starts while the display is
+  asleep.
+
+**Crashes and stability**
+
+- **K1 class boards no longer crash drawing a QR code or an image** - a canvas buffer could
+  be mistaken for a PNG and drawn at a nonsense size, and draw buffers could be freed while
+  a render was still reading them
+  ([#1673](https://github.com/prestonbrown/helixscreen/issues/1673)).
+- **Switching printers no longer sets up a crash** - a toast left over from the previous
+  printer stayed on screen forever and crashed the app when tapped
+  ([#1719](https://github.com/prestonbrown/helixscreen/issues/1719)); the motion, console
+  and macros overlays reopened as stale copies, and tapping home on the motion overlay
+  crashed ([#1707](https://github.com/prestonbrown/helixscreen/issues/1707)); and home
+  pages could keep drawing with layout data the switch had freed.
+- **Switching printers no longer leaks memory** - every overlay, the numeric keypad and the
+  AMS panels opened before a switch stayed allocated as hidden copies, several hundred KB
+  each, for the rest of the session. They are freed now.
+- **A brief connection drop no longer raises the connection-failed dialog** - a printer
+  that had connected and lost Moonraker for a few seconds was treated as one that never
+  connected.
+- **Lower CPU use while drawing** on every shipped board, up to a quarter less on some
+  screens.
+
+**Touch**
+
+- **Touch lines up on panels whose driver reports its range sideways** - portrait panels
+  such as the Creator 5 Pro's scale touch correctly
+  ([#1450](https://github.com/prestonbrown/helixscreen/issues/1450)). If you set
+  `HELIX_TOUCH_SWAP_AXES=1` to work around this, remove it, or the axes swap twice.
+
+**Install and uninstall**
+
+- **QIDI printers show .3mf thumbnails again** - with the stock screen stopped, nothing
+  unpacked plate thumbnails from .3mf files, so Fluidd and HelixScreen showed none. A small
+  helper service now does it, set up on install and on update
+  ([#1713](https://github.com/prestonbrown/helixscreen/issues/1713)).
+- **The QIDI installer warns what the stock client carries** - on newer QIDI firmware,
+  stopping it breaks QIDI Studio box sync, QIDI cloud and box filament edits. The installer
+  says so once, and the QIDI guide describes the trade-off.
+- **A failed download no longer leaves a printer with no screen** - the installer downloads
+  and checks the release before it disables the stock UI, which also keeps the network up
+  on boards whose stock UI runs WiFi, like the U1.
+- **Uninstall restores the QIDI and MKS stock screen** instead of leaving the boot splash
+  up until a reboot.
+- **WiFi respects a radio an administrator blocked** - on a machine where WiFi was never
+  set up in HelixScreen, a radio blocked at boot stays blocked
+  ([#1697](https://github.com/prestonbrown/helixscreen/issues/1697)).
+
+**Themes**
+
+- **Text on coloured buttons stays readable** - buttons, badges, AMS lane and slot badges,
+  filament swatches, LED chips, action prompts, the jog pad, screws-tilt indicators and
+  step circles missed readable contrast on most shipped themes. They now pick text that
+  reads on their fill, keeping the theme's tint where it can
+  ([#1496](https://github.com/prestonbrown/helixscreen/issues/1496),
+  [#1648](https://github.com/prestonbrown/helixscreen/issues/1648)).
+- **A theme saved in the editor sticks** when the theme explorer closes, and the explorer's
+  preset picker keeps previewing after the editor has been opened.
+- **Edit mode's trash and configure icons are visible** against their selection pill in
+  light and dark themes.
+
+**Home screen**
+
+- **The add-page tile is labelled** - it reads "Add page" in the current language, and the
+  plus sign no longer looks disabled. The user guide now describes adding and deleting
+  pages as 1.0 does it.
+- **Tapping anywhere on a controls card opens its overlay**, header included.
+
+**Printing and filament systems**
+
+- **The print status thumbnail shows on printers whose Moonraker metadata is broken** - it
+  is read from the gcode header when metadata is missing, as on QIDI Q2 and Max 4.
+- **Calibration files preview** - OrcaSlicer pressure advance, flow and retraction tests no
+  longer render blank.
+- **Snapmaker U1 explains a refused resume** when an extruder's filament type is unset, and
+  offers only a dismiss where Resume would be refused again.
+- **AFC shows only device actions it can run** - single-extruder machines no longer get an
+  "Unknown action" on the LED action, and setups without a hub no longer show a bowden
+  length slider they cannot use.
+- **The printer setup wizard stops reopening on every boot** on ForgeX and zmod AD5M Pro
+  machines after a targeted reconfigure.
+- **Filament remap and Snapmaker filament messages are translated** into all eight
+  languages.
+
+## [1.0.1] - 2026-09-20
+
+<!-- whatsnew
+The first patch release on the 1.0 line.
+
+A Centauri Carbon is no longer identified as a Qidi. The pre-print screen learns each
+printer's real heating rate and stops claiming phases the printer has not reached.
+Filament colour and temperature edits stick, black included. Bed mesh profiles save
+under the name you chose.
+
+K2 install and restore verify the boot link before offering a reboot, and ForgeX
+machines keep the display mode they arrived on.
+-->
+
+The first patch release on the 1.0 line. The bulk of it is in five areas: which printer
+HelixScreen thinks it is talking to, what the pre-print screen claims the printer is
+doing, whether filament system edits survive being written, where a bed mesh actually
+gets saved, and the install and restore paths on K2 and ForgeX machines.
+
+### Added
+
+- **The pre-print screen follows printers that narrate through the display** - a
+  PRINT_START that reports its phases with SET_DISPLAY_TEXT or M117 was previously
+  invisible, because commands inside a macro never echo to the console. Those printers
+  now get a tracked pre-print sequence like any other.
+- **An aux fan role** - a printer declaring an auxiliary fan gets it named and mapped,
+  and a preset pointing at it resolves instead of silently doing nothing.
+
+### Fixed
+
+**Printer identification**
+
+- **A Centauri Carbon is no longer identified as a Qidi** - a machine running COSMOS
+  matched on a shared command and came up as the wrong printer at 89% confidence, which
+  meant the wrong profile for everything downstream. It now identifies exactly.
+
+**Starting a print**
+
+- **Heating estimates are per-printer and hold across prints** - the pre-print screen
+  learns each machine's real climb rate rather than a shared guess, saves the whole climb
+  rather than the part before a hold, and keeps what it learned when a timeout ends the
+  pre-print early.
+- **The pre-print screen waits for heaters to actually reach target** - it no longer ends
+  on a timeout while a heater is still climbing, and it treats a heater swinging around
+  its target as settled rather than still climbing.
+- **Centauri Carbon pre-print phases are tracked** - the COSMOS PRINT_START sequence
+  matched nothing, leaving every phase on a single default estimate. Its phases now map.
+- **A heat soak holds the screen open for the time it announces** - a COSMOS heat soak on
+  the Centauri Carbon no longer looks finished minutes before it is.
+- **A heating bed is labelled as one** - a heat soak relabels it correctly, and an idle
+  mesh step gives way to the nozzle heat rather than sitting in front of it.
+- **A file that would trigger an emergency stop is refused before printing** - a gcode
+  file calling a command the printer turns into an emergency stop is blocked up front.
+- **A file scanned too early is scanned again** - a file checked before the printer's
+  macros had been read was cleared on incomplete information and stayed cleared for the
+  rest of the session. That answer is now reused only while it still applies.
+- **K2 phase narration is the printer's, not ours** - our own pre-start echo stopped
+  claiming three phases the printer had not reached.
+- **A paused print stops advancing** - progress no longer creeps forward, and it is no
+  longer recorded internally either, whatever the printer reports.
+- **An active print keeps its status screen** - closing the screen during a print no
+  longer discards it, and a job that ends while the screen is hidden releases cleanly.
+- **A filament runout that stops the print is reported** - the removal notice also waits
+  until a tool change would have refilled, so it is not raised prematurely.
+- **The 2D preview appears complete** - it is built off screen and swapped in, rather than
+  drawing itself in front of you.
+
+**Filament systems**
+
+- **AFC and Happy Hare edits survive** - a slot's colour and temperatures are no longer
+  dropped when the override is written, clearing a slot erases it from disk, and Happy
+  Hare's override store is loaded at startup instead of being built empty.
+- **Black is a real colour** - a slot set to pure black is dispatched to AFC and Happy
+  Hare rather than read as unset (#1597), and the spool editor treats it the same way
+  (#1608).
+- **A spool weight edit changes only the weight** (#1652) - saving a meter reading no
+  longer rewrites the rest of the slot with it.
+- **Filament loading respects temperature limits** - a macro prefill stays above the
+  extrusion minimum and within the hotend's maximum, is handed the nozzle temperature the
+  panel is showing, and on a multi-tool machine uses the extruder the loading slot feeds
+  rather than whichever one is active.
+- **Homing consent is spent once and returned if unused** - a confirmed home before a
+  macro load homes first, a raw extrude never asks, and a failed dispatch releases the
+  consent it did not use.
+- **An unavailable remap explains itself** - the filament card no longer offers a remap it
+  would refuse, dims the chips rather than the whole card, and moves its refusal into a
+  help modal that offers the fix. A tool changer with no ASSIGN_TOOL refuses outright.
+- **The file-rewriting warning appears only when the file is rewritten** - printers that
+  route filament natively were warned that the job file would be modified before
+  printing, which was never true for them.
+- **Lane presence comes from the sensors** - silk sensors own whether a lane is loaded,
+  rather than inferring it from a Spoolman weight poll, and a single-position system is
+  no longer clamped to a one-slot span (#957).
+- **Snapmaker U1 with a PAXX AFC-Lite** - the Snapmaker filament system takes precedence
+  instead of the two fighting over the machine.
+- **CFS error messages match Creality's own table** - and the long CFS verdict message no
+  longer overflows its box in any language (#1605).
+
+**Bed mesh and calibration**
+
+- **A mesh is saved under the name you chose** - calibration reported success under the
+  chosen name while storing the mesh in `default`, and replacing another stored profile
+  now asks first.
+- **Profile names with spaces work everywhere** - names are quoted on every path they are
+  sent, and a name containing a semicolon is refused rather than silently breaking.
+- **A mesh is named before it is probed** - so it lands under the name printing will look
+  for, rather than somewhere printing cannot find it.
+- **The Centauri Carbon uses its own bed mesh macro** - COSMOS machines delegate to the
+  firmware's macro and count their mesh points, rather than reporting a mesh that was
+  never taken.
+- **Your own mesh macro is not failed for an optional command** - only a shipped
+  calibration sequence fails on a command the printer does not know. A wrapper macro of
+  your own kept probing while being reported as failed.
+- **Centauri Carbon mesh calibration no longer waits for a hot bed to cool** - and
+  heaters the COSMOS sequence turned on are turned back off when it finishes.
+- **Dismissing the mesh naming dialog leaves Probe working** - and the default profile is
+  re-probed without asking again.
+- **The mesh naming dialog speaks every language** - its save and replace messages were
+  English-only regardless of the language set.
+
+**Chamber heaters**
+
+- **A chamber heater or sensor counts only while the printer reports it** - a stale
+  assignment no longer presents itself as live, and a sensor named in configuration is
+  re-resolved on each discovery.
+- **Filament and material temperatures read the resolved chamber heater** - rather than a
+  different one than the rest of the screen is showing.
+
+**Installing and restoring**
+
+- **K2 stock UI restore verifies the boot link** (#1641) - it offers a reboot only once
+  the link is confirmed, reports an app that failed to start rather than claiming success,
+  and kills the carve-out web server properly.
+- **The K2 web server carve-out survives restarts and reboots** (#1641, #1665) - it runs
+  as a supervised service, and deploying records it in the ledger with both boot links
+  verified (#1667).
+- **An interrupted K2 or K1 install can be resumed** (#1668) - the disabled-services
+  ledger is found wherever the interrupted run left it, and the K1 sweep stops the web
+  server with the rest of the stock backend.
+- **ForgeX machines keep the display mode they arrived on** - a machine arriving in FEATHER
+  mode kept drawing over HelixScreen indefinitely, and the network daemon is now restored
+  at startup so first-run WiFi setup is reachable.
+- **Presets survive the wizard** (#837) - post-wizard migration seeds role keys that were
+  never set, a preset value is no longer lost during startup, and AD5M variants get the
+  second filament sensor they declare.
+
+**Networking**
+
+- **Hidden networks can be joined** - both network backends now send what their tool
+  requires for a hidden SSID.
+- **A network daemon that is installed but down is reported as such** - rather than being
+  read as absent and quietly replaced.
+
+**Screen and interface**
+
+- **The panel goes dark at sleep even where the backlight works** (#1594) - previously a
+  machine with working backlight control kept showing the last frame.
+- **A backlight write the kernel rejects is reported** (#1595) - instead of being treated
+  as applied.
+- **Home edit mode gestures are classified against their own press point** - so a drag
+  started in one tile is not attributed to another.
+- **The first-run tour behaves** - it starts once however many things ask for it, waits
+  for the wizard to finish, and does not open on top of home edit mode.
+- **The WiFi password dialog cannot be left dangling** (#1579) - anything else destroying
+  it no longer leaves a stale reference behind.
+- **A 2D render is not refused over a saved Thumbnail Only preference** - the two settings
+  are now one decision instead of disagreeing.
+- **Chinese reads correctly on the slot reservation message** - it used a character the
+  bundled font does not carry, so it drew as a missing glyph.
+- **LED detection reads live configuration** - and a synthetic strip is never reported
+  missing.
+- **Print list drops Size and Modified on narrow screens** - rather than crowding the
+  file name off.
+
+**Stability and performance**
+
+- **Several crashes on screens that rebuild themselves** - event guards that had stopped
+  applying were restored, and an observer on a value that is never freed is now removed
+  correctly.
+- **History no longer refetches on every timelapse frame** - a timelapse component moving
+  and rendering frames throughout a print cost a full history reload each time.
+- **Streaming a large gcode preview is budgeted honestly** - a RAM-backed cache was
+  charged nothing for the file it streamed, so the memory it used went uncounted.
+- **A memory warning that never clears escalates** - instead of sitting at warning
+  indefinitely.
+- **The Centauri Carbon caches to flash rather than RAM** - and the cache reports whether
+  it actually landed in RAM instead of assuming it did.
+- **Debug bundles find logs and crash files on every printer** - on Creality, Flashforge
+  and Centauri Carbon machines the bundle looked in one place that did not exist there, so
+  an uploaded bundle could be missing the crash report entirely.
+
+### Changed
+
+- **Crash reports name real functions on statically linked printers** - on the six
+  machines built without position-independent code, the load address was added to symbol
+  addresses that were already absolute, so backtraces pointed at the wrong code.
+- **Moonraker settings the environment file cannot change are no longer shipped** - they
+  only looked configurable.
+
 ## [1.0.0] - 2026-09-09
 
 <!-- whatsnew
@@ -6342,6 +6896,10 @@ Initial tagged release. Foundation for all subsequent development.
 - Automated GitHub Actions release pipeline
 - One-liner installation script with platform auto-detection
 
+[1.0.4]: https://github.com/prestonbrown/helixscreen/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/prestonbrown/helixscreen/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/prestonbrown/helixscreen/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/prestonbrown/helixscreen/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/prestonbrown/helixscreen/compare/v0.99.118...v1.0.0
 [0.99.118]: https://github.com/prestonbrown/helixscreen/compare/v0.99.117...v0.99.118
 [0.99.117]: https://github.com/prestonbrown/helixscreen/compare/v0.99.116...v0.99.117

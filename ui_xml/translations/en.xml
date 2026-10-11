@@ -120,6 +120,7 @@
   <translation tag="Abort already in progress" en="Abort already in progress"/>
   <translation tag="Abort failed" en="Abort failed"/>
   <translation tag="Aborting AFC operation..." en="Aborting AFC operation..."/>
+  <translation tag="Aborting..." en="Aborting..."/>
   <translation tag="About" en="About"/>
   <translation tag="Accel to Decel" en="Accel to Decel"/>
   <translation tag="Acceleration to deceleration limit (mm/s²)" en="Acceleration to deceleration limit (mm/s²)"/>
@@ -143,6 +144,7 @@
   <translation tag="Add Vendor" en="Add Vendor"/>
   <translation tag="Add Widget" en="Add Widget"/>
   <translation tag="Add custom filament" en="Add custom filament"/>
+  <translation tag="Add page" en="Add page"/>
   <translation tag="Added to Spoolman" en="Added to Spoolman"/>
   <translation tag="Address" en="Address"/>
   <translation tag="Adjust belt tension until the belt appears stationary" en="Adjust belt tension until the belt appears stationary"/>
@@ -578,11 +580,15 @@
   <translation tag="Copied to clipboard!" en="Copied to clipboard!"/>
   <translation tag="Copy Command" en="Copy Command"/>
   <translation tag="Copy failed - use SSH manually" en="Copy failed - use SSH manually"/>
+  <translation tag="Copying from USB" en="Copying from USB"/>
+  <translation tag="Copying from USB stopped responding" en="Copying from USB stopped responding"/>
+  <translation tag="Copying from USB..." en="Copying from USB..."/>
   <translation tag="Corner roundness" en="Corner roundness"/>
   <translation tag="Correction (Ki)" en="Correction (Ki)"/>
   <translation tag="Could not analyze PRINT_START macro. Some print options may be unavailable." en="Could not analyze PRINT_START macro. Some print options may be unavailable."/>
   <translation tag="Could not answer the connection request" en="Could not answer the connection request"/>
   <translation tag="Could not check webcam status.&#10;Check printer connection." en="Could not check webcam status.&#10;Check printer connection."/>
+  <translation tag="Could not copy {} from USB: {}" en="Could not copy {} from USB: {}"/>
   <translation tag="Could not forget device" en="Could not forget device"/>
   <translation tag="Could not load printer database" en="Could not load printer database"/>
   <translation tag="Could not parse tips database" en="Could not parse tips database"/>
@@ -669,6 +675,7 @@
   <translation tag="Deploy" en="Deploy"/>
   <translation tag="Describe the issue (optional)" en="Describe the issue (optional)"/>
   <translation tag="Detailed" en="Detailed"/>
+  <translation tag="Detect automatically" en="Detect automatically"/>
   <translation tag="Detecting plate..." en="Detecting plate..."/>
   <translation tag="Detecting printer type..." en="Detecting printer type..."/>
   <translation tag="Detecting..." en="Detecting..."/>
@@ -993,6 +1000,7 @@
   <translation tag="Filament is pulling tight" en="Filament is pulling tight"/>
   <translation tag="Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool." en="Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool."/>
   <translation tag="Filament load failed: {}" en="Filament load failed: {}"/>
+  <translation tag="Filament not set" en="Filament not set"/>
   <translation tag="Filament operation failed" en="Filament operation failed"/>
   <translation tag="Filament operation timed out" en="Filament operation timed out"/>
   <translation tag="Filament ran out - nothing at the toolhead and the print is paused." en="Filament ran out - nothing at the toolhead and the print is paused."/>
@@ -1000,6 +1008,8 @@
   <translation tag="Filament ran out at the toolhead" en="Filament ran out at the toolhead"/>
   <translation tag="Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume." en="Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume."/>
   <translation tag="Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume." en="Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume."/>
+  <translation tag="Filament reload failed" en="Filament reload failed"/>
+  <translation tag="Filament remapping is unavailable" en="Filament remapping is unavailable"/>
   <translation tag="Filament runout" en="Filament runout"/>
   <translation tag="Filament runout and motion detection sensors" en="Filament runout and motion detection sensors"/>
   <translation tag="Filament runout detection status" en="Filament runout detection status"/>
@@ -1213,7 +1223,6 @@
   <translation tag="Install Update" en="Install Update"/>
   <translation tag="Install plugin" en="Install plugin"/>
   <translation tag="Install script not found. Use the remote install command instead." en="Install script not found. Use the remote install command instead."/>
-  <translation tag="Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history." en="Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history."/>
   <translation tag="Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:" en="Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:"/>
   <translation tag="Install the timelapse plugin via SSH,&#10;then tap &quot;Check Again&quot;." en="Install the timelapse plugin via SSH,&#10;then tap &quot;Check Again&quot;."/>
   <translation tag="Install timelapse plugin" en="Install timelapse plugin"/>
@@ -1833,6 +1842,7 @@
   <translation tag="Print error" en="Print error"/>
   <translation tag="Print failed" en="Print failed"/>
   <translation tag="Print history statistics" en="Print history statistics"/>
+  <translation tag="Print history will show the rewritten name" en="Print history will show the rewritten name"/>
   <translation tag="Print issue detected" en="Print issue detected"/>
   <translation tag="Print preparation failed: {}" en="Print preparation failed: {}"/>
   <translation tag="Print progress and file selection" en="Print progress and file selection"/>
@@ -1976,7 +1986,9 @@
   <translation tag="Recording Mode" en="Recording Mode"/>
   <translation tag="Recover" en="Recover"/>
   <translation tag="Recover MMU state?" en="Recover MMU state?"/>
+  <translation tag="Recover State" en="Recover State"/>
   <translation tag="Recovering AFC system..." en="Recovering AFC system..."/>
+  <translation tag="Recovering..." en="Recovering..."/>
   <translation tag="Recovery failed" en="Recovery failed"/>
   <translation tag="Recovery failed: " en="Recovery failed: "/>
   <translation tag="Recovery failed: {}" en="Recovery failed: {}"/>
@@ -1997,7 +2009,8 @@
   <translation tag="Remaining (g)" en="Remaining (g)"/>
   <translation tag="Remaining Weight (g)" en="Remaining Weight (g)"/>
   <translation tag="Remap Tool" en="Remap Tool"/>
-  <translation tag="Remap needs the HelixPrint plugin" en="Remap needs the HelixPrint plugin"/>
+  <translation tag="Remapping rewrites the job file before printing it. This printer&apos;s Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally." en="Remapping rewrites the job file before printing it. This printer&apos;s Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally."/>
+  <translation tag="Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.&#10;&#10;Installing the plugin takes a moment and needs no restart." en="Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.&#10;&#10;Installing the plugin takes a moment and needs no restart."/>
   <translation tag="Remap…" en="Remap…"/>
   <translation tag="Remember slot spool details across an eject" en="Remember slot spool details across an eject"/>
   <translation tag="Remove" en="Remove"/>
@@ -2240,6 +2253,7 @@
   <translation tag="Set logging verbosity for troubleshooting" en="Set logging verbosity for troubleshooting"/>
   <translation tag="Set up" en="Set up"/>
   <translation tag="Set up your label printer in Settings" en="Set up your label printer in Settings"/>
+  <translation tag="Set what is really selected and loaded. Nothing moves." en="Set what is really selected and loaded. Nothing moves."/>
   <translation tag="Settings" en="Settings"/>
   <translation tag="Settings Snapshot" en="Settings Snapshot"/>
   <translation tag="Settings reset to defaults. Restarting..." en="Settings reset to defaults. Restarting..."/>
@@ -2290,6 +2304,7 @@
   <translation tag="Slot %d: %.0fg of %.0fg needed" en="Slot %d: %.0fg of %.0fg needed"/>
   <translation tag="Slot 1" en="Slot 1"/>
   <translation tag="Slot {}" en="Slot {}"/>
+  <translation tag="Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print." en="Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print."/>
   <translation tag="Slot {} is blocked — manual intervention required" en="Slot {} is blocked — manual intervention required"/>
   <translation tag="Slot {} matches." en="Slot {} matches."/>
   <translation tag="Slot {} spool cleared" en="Slot {} spool cleared"/>
@@ -2512,6 +2527,10 @@
   <translation tag="This plugin lets HelixScreen control print start options like bed mesh and QGL. Once installed, use Configure PRINT_START below to enable optional steps." en="This plugin lets HelixScreen control print start options like bed mesh and QGL. Once installed, use Configure PRINT_START below to enable optional steps."/>
   <translation tag="This print needs about %.0fg but the spool has about %.0fg remaining. Start anyway?" en="This print needs about %.0fg but the spool has about %.0fg remaining. Start anyway?"/>
   <translation tag="This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets." en="This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets."/>
+  <translation tag="This removes the plugin&apos;s Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that." en="This removes the plugin&apos;s Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that."/>
+  <translation tag="This replaces the printer&apos;s helper macros with the current version and restarts Klipper." en="This replaces the printer&apos;s helper macros with the current version and restarts Klipper."/>
+  <translation tag="This replaces the printer&apos;s helper macros with the current version. A print is running, so Klipper restarts after it finishes." en="This replaces the printer&apos;s helper macros with the current version. A print is running, so Klipper restarts after it finishes."/>
+  <translation tag="This system does not support bypass mode" en="This system does not support bypass mode"/>
   <translation tag="This tool probes each bed screw and tells you how much to adjust." en="This tool probes each bed screw and tells you how much to adjust."/>
   <translation tag="This will apply the Z-offset to your endstop and restart Klipper to save the configuration. The printer will briefly disconnect." en="This will apply the Z-offset to your endstop and restart Klipper to save the configuration. The printer will briefly disconnect."/>
   <translation tag="This will apply the Z-offset to your probe and restart Klipper to save the configuration. The printer will briefly disconnect." en="This will apply the Z-offset to your probe and restart Klipper to save the configuration. The printer will briefly disconnect."/>
@@ -2629,6 +2648,7 @@
   <translation tag="Unload filament" en="Unload filament"/>
   <translation tag="Unload macro not configured" en="Unload macro not configured"/>
   <translation tag="Unload may still be running — response timed out" en="Unload may still be running — response timed out"/>
+  <translation tag="Unloaded" en="Unloaded"/>
   <translation tag="Unloading" en="Unloading"/>
   <translation tag="Unloading Start Speed" en="Unloading Start Speed"/>
   <translation tag="Unloading before bypass..." en="Unloading before bypass..."/>
@@ -2854,6 +2874,7 @@
   <translation tag="{} disabled" en="{} disabled"/>
   <translation tag="{} enabled" en="{} enabled"/>
   <translation tag="{} failed: {}" en="{} failed: {}"/>
+  <translation tag="{} filament" en="{} filament"/>
   <translation tag="{} filament sensors available" en="{} filament sensors available"/>
   <translation tag="{} filament • {}" en="{} filament • {}"/>
   <translation tag="{} heater turned off" en="{} heater turned off"/>

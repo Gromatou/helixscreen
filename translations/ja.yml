@@ -119,6 +119,7 @@ translations:
   Abort already in progress: 中止がすでに進行中です
   Abort failed: 中止に失敗
   Aborting AFC operation...: AFC操作を中止中...
+  Aborting...: 中止中...
   About: バージョン情報
   Accel to Decel: 加速から減速
   Acceleration to deceleration limit (mm/s²): 加速から減速の制限値 (mm/s²)
@@ -142,6 +143,7 @@ translations:
   Add Vendor: ベンダーを追加
   Add Widget: ウィジェットを追加
   Add custom filament: カスタムフィラメントを追加
+  Add page: ページを追加
   Added to Spoolman: Spoolman に追加しました
   Address: アドレス
   Adjust belt tension until the belt appears stationary: ベルトが静止して見えるまでベルト張力を調整してください
@@ -586,6 +588,9 @@ translations:
   Copied to clipboard!: クリップボードにコピーしました！
   Copy Command: コマンドをコピー
   Copy failed - use SSH manually: コピー失敗 - SSHを手動で使用してください
+  Copying from USB: 'USB からコピー中'
+  Copying from USB stopped responding: 'USB からのコピーが応答しなくなりました'
+  Copying from USB...: 'USB からコピー中...'
   Corner roundness: 角の丸み
   Correction (Ki): 補正 (Ki)
   Could not analyze PRINT_START macro. Some print options may be unavailable.: PRINT_START
@@ -593,6 +598,7 @@ translations:
   Could not answer the connection request: '接続リクエストに応答できませんでした'
   ? "Could not check webcam status.\nCheck printer connection."
   : "ウェブカメラの状態を確認できませんでした。\nプリンター接続を確認してください。"
+  'Could not copy {} from USB: {}': '{} を USB からコピーできませんでした: {}'
   Could not forget device: デバイスの登録を解除できませんでした
   Could not load printer database: プリンターデータベースを読み込めませんでした
   Could not parse tips database: ヒントデータベースを解析できませんでした
@@ -679,6 +685,7 @@ translations:
   Deploy: 展開
   Describe the issue (optional): 問題の詳細（任意）
   Detailed: 詳細
+  Detect automatically: 自動検出
   Detecting plate...: プレートを検出中...
   Detecting printer type...: プリンタータイプを検出中...
   Detecting...: 検出中...
@@ -1012,6 +1019,7 @@ translations:
   ? Filament is still at the nozzle after unloading. The cut or retract may not have completed. Clear the toolhead before loading another spool.
   : アンロード後もフィラメントがノズルに残っています。カットまたは引き戻しが完了していない可能性があります。別のスプールを装填する前にツールヘッドを空にしてください。
   'Filament load failed: {}': 'フィラメントの装填に失敗しました: {}'
+  Filament not set: 'フィラメント未設定'
   Filament operation failed: フィラメント操作に失敗しました
   Filament operation timed out: フィラメント操作がタイムアウトしました
   Filament ran out - nothing at the toolhead and the print is paused.: 'フィラメントが切れました - ツールヘッドには何も残っておらず、印刷は一時停止しています。'
@@ -1020,6 +1028,8 @@ translations:
   Filament ran out at the toolhead: 'ツールヘッドでフィラメントが切れました'
   Filament ran out. Auto-refill is off, so the CFS will not switch spools on its own. Load filament, then resume.: 'フィラメントが切れました。自動補充がオフのため、CFSは自動でスプールを切り替えません。フィラメントを装填してから再開してください。'
   Filament ran out. The CFS knows which spools match, but those slots are empty. Load one of them, then resume.: フィラメントが切れました。CFSは適合するスプールを認識していますが、該当するスロットは空です。いずれかを装填してから再開してください。
+  Filament reload failed: フィラメントの再装填に失敗しました
+  Filament remapping is unavailable: フィラメントのリマップは利用できません
   Filament runout: フィラメント切れ
   Filament runout and motion detection sensors: フィラメント切れとモーション検出センサー
   Filament runout detection status: 'フィラメント切れ検出の状態'
@@ -1242,7 +1252,6 @@ translations:
   Install Update: 更新をインストール
   Install plugin: プラグインをインストール
   Install script not found. Use the remote install command instead.: インストールスクリプトが見つかりません。代わりにリモートインストールコマンドを使用してください。
-  Install the HelixPrint plugin in Advanced settings to remap filament without affecting print history.: 印刷履歴に影響を与えずにフィラメントをリマップするには、詳細設定でHelixPrintプラグインをインストールしてください。
   'Install the HelixPrint plugin to enable fast G-code modifications. Run this command via SSH on your printer:': '高速
     G-code 修正を有効にするために HelixPrint プラグインをインストールしてください。プリンターで SSH 経由でこのコマンドを実行してください:'
   ? "Install the timelapse plugin via SSH,\nthen tap \"Check Again\"."
@@ -1880,6 +1889,7 @@ translations:
   Print error: 印刷エラー
   Print failed: 印刷失敗
   Print history statistics: '印刷履歴の統計'
+  Print history will show the rewritten name: 印刷履歴には書き換え後の名前が表示されます
   Print issue detected: 印刷の問題を検出しました
   'Print preparation failed: {}': '印刷準備に失敗しました: {}'
   Print progress and file selection: '印刷の進捗とファイル選択'
@@ -2027,7 +2037,9 @@ translations:
   Recording Mode: 録画モード
   Recover: 回復
   Recover MMU state?: MMU の状態を復旧しますか？
+  Recover State: 状態を回復
   Recovering AFC system...: AFCシステムを復旧中...
+  Recovering...: 復旧中...
   Recovery failed: 復旧失敗
   'Recovery failed: ': '復旧に失敗しました: '
   'Recovery failed: {}': '復旧に失敗しました: {}'
@@ -2048,7 +2060,10 @@ translations:
   Remaining (g): 残量 (g)
   Remaining Weight (g): 残量（g）
   Remap Tool: ツールを再割当
-  Remap needs the HelixPrint plugin: リマップにはHelixPrintプラグインが必要です
+  ? Remapping rewrites the job file before printing it. This printer's Moonraker is too old for the HelixPrint plugin to restore the original filename afterwards, so the finished job is listed under the rewritten name. Remapping itself works normally.
+  : リマップは印刷前にジョブファイルを書き換えます。このプリンターのMoonrakerは旧バージョンのため、HelixPrintプラグインが後から元のファイル名を復元できず、完了したジョブは書き換え後の名前で表示されます。リマップ自体は正常に動作します。
+  ? "Remapping rewrites the job file before printing it. Without the HelixPrint plugin the rewritten copy is what lands in your print history, so finished jobs are listed under names like modified_1730824_benchy.gcode instead of the file you picked.\n\nInstalling the plugin takes a moment and needs no restart."
+  : "リマップは印刷前にジョブファイルを書き換えます。HelixPrintプラグインがない場合、書き換えられたコピーが印刷履歴に残るため、完了したジョブは選んだファイルではなくmodified_1730824_benchy.gcodeのような名前で表示されます。\n\nプラグインのインストールはすぐに完了し、再起動は必要ありません。"
   Remap…: リマップ…
   Remember slot spool details across an eject: 取り出し後もスロットのスプール情報を記憶します
   Remove: 削除
@@ -2299,6 +2314,7 @@ translations:
   Set logging verbosity for troubleshooting: トラブルシューティング用のログの詳細レベルを設定
   Set up: セットアップ
   Set up your label printer in Settings: 設定でラベルプリンターをセットアップしてください
+  Set what is really selected and loaded. Nothing moves.: 実際に選択・装填されている状態を設定します。何も動きません。
   Settings: 設定
   Settings Snapshot: 設定スナップショット
   Settings reset to defaults. Restarting...: 設定をデフォルトにリセットしました。再起動中...
@@ -2350,6 +2366,8 @@ translations:
   'Slot %d: %.0fg of %.0fg needed': 'スロット %d: %.0fg（必要 %.0fg）'
   Slot 1: スロット1
   Slot {}: スロット {}
+  ? Slot {} has no filament type set, so the printer will not resume. Set its material in the filament panel, then resume the print.
+  : 'スロット {} にフィラメントの種類が設定されていないため、プリンターは再開しません。フィラメントパネルで材料を設定してから印刷を再開してください。'
   Slot {} is blocked — manual intervention required: スロット {} がブロックされています — 手動での対応が必要です
   Slot {} matches.: 'スロット {} が一致します。'
   Slot {} spool cleared: スロット {} のスプールをクリアしました
@@ -2596,6 +2614,12 @@ translations:
     %.0fg 必要ですが、スプールの残量は約 %.0fg です。それでも開始しますか？
   ? This printer looks like a {} ({}% confidence), but it is set up as a {}. A wrong type applies incorrect pre-print options and presets.
   : このプリンターは {} のようです（信頼度 {}%）が、{} として設定されています。誤ったタイプでは不正確な印刷前オプションとプリセットが適用されます。
+  ? This removes the plugin's Moonraker component and restarts Moonraker. The printer will briefly disconnect. If old phase-tracking lines are still in PRINT_START, they are removed too, with backups kept. A Klipper restart applies that.
+  : プラグインの Moonraker コンポーネントを削除し、Moonraker を再起動します。プリンターは一時的に切断されます。PRINT_START に古いフェーズトラッキングの行が残っている場合、それらも削除されますが、バックアップは保持されます。Klipper を再起動すると、その変更が適用されます。
+  This replaces the printer's helper macros with the current version and restarts Klipper.: 'プリンターのヘルパーマクロを現在のバージョンに置き換え、Klipper を再起動します。'
+  ? This replaces the printer's helper macros with the current version. A print is running, so Klipper restarts after it finishes.
+  : 'プリンターのヘルパーマクロを現在のバージョンに置き換えます。印刷中のため、Klipper は印刷完了後に再起動されます。'
+  This system does not support bypass mode: 'このシステムはバイパスモードに対応していません'
   This tool probes each bed screw and tells you how much to adjust.: このツールは各ベッドネジをプローブし、どのくらい調整が必要かを教えます。
   ? This will apply the Z-offset to your endstop and restart Klipper to save the configuration.
     The printer will briefly disconnect.
@@ -2722,6 +2746,7 @@ translations:
   Unload filament: 'フィラメントをアンロード'
   Unload macro not configured: アンロードマクロが未設定です
   Unload may still be running — response timed out: 排出がまだ実行中の可能性があります — 応答タイムアウト
+  Unloaded: 排出済み
   Unloading: アンロード中
   Unloading Start Speed: 'アンロード開始速度'
   Unloading before bypass...: バイパス前にアンロード中...
@@ -2973,6 +2998,7 @@ translations:
   '{} disabled': '{} を無効にしました'
   '{} enabled': '{} を有効にしました'
   '{} failed: {}': '{} に失敗しました: {}'
+  '{} filament': 'フィラメント {}'
   '{} filament sensors available': '{} 個のフィラメントセンサーが利用可能です'
   '{} filament • {}': 'フィラメント {} • {}'
   '{} heater turned off': '{} ヒーターをオフにしました'

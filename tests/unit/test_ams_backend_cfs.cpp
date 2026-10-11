@@ -19,10 +19,13 @@
 #include "settings_manager.h"
 #include "test_helpers/cfs_test_access.h"
 #include "test_helpers/print_state_test_drivers.h"
+#include "ui/ams_drawing_utils.h"
 
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <unistd.h>
@@ -917,6 +920,68 @@ TEST_CASE("CFS disconnected unit handling", "[ams][cfs]") {
     }
 }
 
+// Every CFS box feeds the printer's one extruder, so the overview draws one
+// toolhead and routes each connected box into it.
+TEST_CASE("CFS boxes converge on one toolhead in the system path layout",
+          "[ams][cfs][tool_layout][ams_draw]") {
+    auto [boxes, gap] = GENERATE(std::pair{1, 0}, std::pair{2, 0}, std::pair{4, 0}, std::pair{2, 1},
+                                 std::pair{4, 2}, std::pair{4, 3});
+    INFO(boxes << " boxes, disconnected address " << gap);
+    json box = json{{"state", "connect"}, {"filament", 0},       {"auto_refill", 1},
+                    {"enable", 1},        {"filament_useup", 1}, {"map", json::object()}};
+    for (int u = 1; u <= boxes; ++u) {
+        box["T" + std::to_string(u)] =
+            json{{"state", u == gap ? "None" : "connect"},
+                 {"filament", "None"},
+                 {"vender", json::array({"none", "none", "none", "none"})},
+                 {"remain_len", json::array({"-1", "-1", "-1", "-1"})},
+                 {"color_value", json::array({"-1", "-1", "-1", "-1"})},
+                 {"material_type", json::array({"-1", "-1", "-1", "-1"})}};
+    }
+    const auto info = AmsBackendCfs::parse_box_status(box);
+    const auto layout = ams_draw::compute_system_tool_layout(info, nullptr);
+
+    REQUIRE(info.units.size() == static_cast<size_t>(boxes - (gap > 0 ? 1 : 0)));
+    CHECK(layout.total_physical_tools == 1);
+    REQUIRE(layout.units.size() == info.units.size());
+    for (const auto& unit : layout.units) {
+        CHECK(unit.tool_count == 1);
+        CHECK(unit.first_physical_tool == 0);
+    }
+    // The active-route highlight resolves every bay's tool to that toolhead.
+    for (const auto& unit : info.units) {
+        for (const auto& slot : unit.slots) {
+            if (slot.mapped_tool >= 0) {
+                CHECK(layout.virtual_to_physical.at(slot.mapped_tool) == 0);
+            }
+        }
+    }
+}
+
+// Cards run in box-address order around a box that is off the bus.
+TEST_CASE("CFS overview cards stay in address order with a box off the bus",
+          "[ams][cfs][tool_layout][ams_draw]") {
+    json box = json{{"state", "connect"}, {"filament", 0},       {"auto_refill", 1},
+                    {"enable", 1},        {"filament_useup", 1}, {"map", json::object()}};
+    for (int u = 1; u <= 4; ++u) {
+        box["T" + std::to_string(u)] =
+            json{{"state", u == 2 ? "None" : "connect"},
+                 {"filament", "None"},
+                 {"vender", json::array({"none", "none", "none", "none"})},
+                 {"remain_len", json::array({"-1", "-1", "-1", "-1"})},
+                 {"color_value", json::array({"-1", "-1", "-1", "-1"})},
+                 {"material_type", json::array({"-1", "-1", "-1", "-1"})}};
+    }
+    const auto info = AmsBackendCfs::parse_box_status(box);
+    const auto order = ams_draw::compute_system_tool_layout(info, nullptr).display_order;
+
+    std::vector<std::string> names;
+    for (int i : order) {
+        names.push_back(info.units[static_cast<size_t>(i)].name);
+    }
+    CHECK(names == std::vector<std::string>{"T1", "T3", "T4"});
+}
+
 TEST_CASE("CFS GCode helpers", "[ams][cfs]") {
     // The CR_BOX_* primitives don't park the toolhead — without wrapping,
     // CR_BOX_FLUSH extrudes onto the build plate instead of into the K2's
@@ -959,7 +1024,7 @@ TEST_CASE("CFS GCode helpers", "[ams][cfs]") {
         REQUIRE(g.find("BOX_SAVE_FAN") != std::string::npos);
         REQUIRE(g.find("BOX_GO_TO_EXTRUDE_POS") != std::string::npos);
         REQUIRE(g.find("BOX_SET_TEMP") == std::string::npos);
-        REQUIRE(g.find("CR_BOX_PRE_OPT\nCR_BOX_CUT\nBOX_MODE_WAIT\n"
+        REQUIRE(g.find("CR_BOX_PRE_OPT\nBOX_CUT_MATERIAL\nBOX_MODE_WAIT\n"
                        "CR_BOX_RETRUDE\nCR_BOX_END_OPT") != std::string::npos);
         REQUIRE(g.find("BOX_RESTORE_FAN") != std::string::npos);
         REQUIRE(g.find("BOX_MOVE_TO_SAFE_POS") != std::string::npos);
@@ -973,7 +1038,7 @@ TEST_CASE("CFS GCode helpers", "[ams][cfs]") {
             const std::string g = AmsBackendCfs::swap_gcode(idx);
             REQUIRE(g.find("BOX_GO_TO_EXTRUDE_POS") != std::string::npos);
             REQUIRE(g.find("BOX_SET_TEMP") == std::string::npos);
-            REQUIRE(g.find("CR_BOX_CUT\nBOX_MODE_WAIT\nCR_BOX_RETRUDE\n"
+            REQUIRE(g.find("CR_BOX_PRE_OPT\nBOX_CUT_MATERIAL\nBOX_MODE_WAIT\nCR_BOX_RETRUDE\n"
                            "BOX_MODE_WAIT\nCR_BOX_EXTRUDE TNN=") != std::string::npos);
             REQUIRE(g.find("BOX_MOVE_TO_SAFE_POS") != std::string::npos);
             // Swap ends with flush of the new slot — wipe before parking.
@@ -1256,7 +1321,7 @@ TEST_CASE("CFS K1 macro variant (#968)", "[ams][cfs]") {
     SECTION("K2 default preserved when variant omitted") {
         // Existing call sites without variant arg must still emit K2 macros.
         REQUIRE(AmsBackendCfs::load_gcode(0).find("CR_BOX_EXTRUDE") != std::string::npos);
-        REQUIRE(AmsBackendCfs::unload_gcode().find("CR_BOX_CUT") != std::string::npos);
+        REQUIRE(AmsBackendCfs::unload_gcode().find("CR_BOX_RETRUDE") != std::string::npos);
         REQUIRE(AmsBackendCfs::swap_gcode(0).find("CR_BOX_EXTRUDE") != std::string::npos);
     }
 }
@@ -3763,10 +3828,45 @@ TEST_CASE("CFS bypass unload gcode: fallback cuts and retracts with the extruder
         REQUIRE(g.find("RESTORE_GCODE_STATE") != std::string::npos);
     }
 
-    // Each dialect cuts with the primitive its own unload already emits.
-    REQUIRE(k2.find("CR_BOX_CUT") != std::string::npos);
+    // Both dialects cut with the firmware's positioned cut, the one their own
+    // unload already emits.
+    REQUIRE(k2.find("BOX_CUT_MATERIAL") != std::string::npos);
     REQUIRE(k1.find("BOX_CUT_MATERIAL") != std::string::npos);
     REQUIRE(k1.find("CR_BOX_CUT") == std::string::npos);
+}
+
+namespace {
+// True when any line of the script starts with the command token `cmd`, so
+// "BOX_CUT_MATERIAL" never satisfies a search for a bare cutter command.
+bool script_has_command(const std::string& script, const std::string& cmd) {
+    std::istringstream lines(script);
+    for (std::string line; std::getline(lines, line);) {
+        const std::string token = line.substr(0, line.find_first_of(" \t"));
+        if (token == cmd) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST_CASE("CFS K2 scripts never strike with the bare cutter primitive", "[ams][cfs][bypass]") {
+    using V = helix::printer::CfsMacroVariant;
+
+    // CR_BOX_CUT (and M8200 C, its slicer-facing alias) rams the cutter from
+    // wherever the toolhead stands; BOX_GO_TO_EXTRUDE_POS leaves it at the purge
+    // chute, not at [box] pre_cut_pos. Every K2 cut goes through BOX_CUT_MATERIAL.
+    std::vector<std::string> scripts = {AmsBackendCfs::unload_gcode(V::K2),
+                                        AmsBackendCfs::bypass_unload_gcode(V::K2, false)};
+    for (int idx : {0, 1, 5, 15}) {
+        scripts.push_back(AmsBackendCfs::swap_gcode(idx, V::K2));
+    }
+    for (const std::string& g : scripts) {
+        INFO(g);
+        REQUIRE(script_has_command(g, "BOX_CUT_MATERIAL"));
+        REQUIRE_FALSE(script_has_command(g, "CR_BOX_CUT"));
+        REQUIRE(g.find("M8200 C") == std::string::npos);
+    }
 }
 
 TEST_CASE("CFS unload routes the bypass sentinel away from the bay script", "[ams][cfs][bypass]") {
@@ -4635,4 +4735,71 @@ TEST_CASE("CFS: a failed payload still sends the envelope unwind", "[ams][cfs][h
 
     REQUIRE(api.contains("G28"));
     REQUIRE(api.contains("CR_BOX_LOAD"));
+}
+
+static json make_multi_unit_box(int unit_count) {
+    json box = json{{"state", "connect"}, {"filament", 0},       {"auto_refill", 1},
+                    {"enable", 1},        {"filament_useup", 1}, {"map", json::object()}};
+    for (int u = 1; u <= unit_count; ++u) {
+        box["T" + std::to_string(u)] =
+            json{{"state", "connect"},
+                 {"filament", "None"},
+                 {"temperature", "27"},
+                 {"dry_and_humidity", "48"},
+                 {"version", "1.1.3"},
+                 {"sn", "SERIAL"},
+                 {"vender", json::array({"none", "none", "none", "none"})},
+                 {"remain_len", json::array({"-1", "-1", "-1", "-1"})},
+                 {"color_value", json::array({"-1", "-1", "-1", "-1"})},
+                 {"material_type", json::array({"-1", "-1", "-1", "-1"})},
+                 {"change_color_num", json::array({"-1", "-1", "-1", "-1"})}};
+    }
+    return box;
+}
+
+// A stock box frame is a delta: the units it omits are unchanged, not gone
+// (prestonbrown/helixscreen#1464).
+TEST_CASE("CFS stock: a delta frame naming one unit leaves the others as they were",
+          "[ams][cfs][1464]") {
+    CfsRemapHelper backend;
+    backend.mark_running();
+    json full = make_multi_unit_box(3);
+    full["T1"]["vender"] = json::array({"Creality", "none", "none", "none"});
+    full["T1"]["remain_len"] = json::array({"300", "-1", "-1", "-1"});
+    full["T1"]["color_value"] = json::array({"0FF5500", "-1", "-1", "-1"});
+    CfsTestAccess::handle_status(backend, make_cfs_notification(full));
+    REQUIRE(backend.get_system_info().units.size() == 3);
+    REQUIRE(backend.get_slot_info(0).color_rgb == 0xFF5500u);
+
+    json delta = json::object();
+    delta["T3"] = full["T3"];
+    delta["T3"]["filament"] = "B";
+    CfsTestAccess::handle_status(backend, make_cfs_notification(delta));
+
+    CHECK(backend.get_system_info().units.size() == 3);
+    CHECK(backend.get_slot_info(0).color_rgb == 0xFF5500u);
+}
+
+// The answer to an action's G-code arrives on the libhv response thread while
+// status frames that preceded it are still queued for main; completion has to
+// queue behind them (#1761).
+TEST_CASE("CFS action completion runs from the UpdateQueue, not the answering thread",
+          "[ams][cfs][1761]") {
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    AmsBackendCfs backend(&api, nullptr);
+
+    bool ran = false;
+    const char* ran_from = nullptr;
+    REQUIRE(CfsTestAccess::dispatch_with_completion(backend, "M117 test", [&ran, &ran_from]() {
+                ran = true;
+                ran_from = helix::ui::UpdateQueue::current_callback_tag();
+            }).success());
+    // The mock answered inside that call; completion waits for the queue.
+    CHECK_FALSE(ran);
+    helix::ui::UpdateQueue::instance().drain();
+    REQUIRE(ran);
+    CHECK(ran_from != nullptr);
 }

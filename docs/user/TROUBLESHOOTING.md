@@ -33,7 +33,7 @@ Solutions to common problems with HelixScreen.
 1. **Settings → System → Log Level → Debug** (or Trace for the deepest detail)
 2. Reproduce the problem
 3. **Settings → Help & About → Upload Debug Bundle** — collects the verbose log + system info and gives you a short share code to paste into a bug report
-4. Set Log Level back to **Warn** when done — Debug and Trace add CPU and log volume
+4. Set Log Level back to **Info** when done. Debug and Trace add CPU and log volume
 
 That's the path for almost everyone. Use the alternatives below only if you can't reach Settings.
 
@@ -64,8 +64,8 @@ tail -f /data/helixscreen/logs/helix.log   # AD5M
 The app log's location varies by platform; see [Collecting Logs](#collecting-logs) for the path on yours.
 
 **Verbosity levels:**
-- `warn` — production default (errors and warnings only)
-- `info` — connection events, panel changes
+- `warn` - errors and warnings only
+- `info` - production default: connection events, panel changes
 - `debug` — detailed state changes, API calls
 - `trace` — everything including LVGL internals
 
@@ -609,25 +609,11 @@ This lists the resolutions the DRM driver will accept for the `-s` flag.
 - The resolution is correct (the whole screen is used), but the *scale* of the interface looks wrong
 
 **Cause:**
-HelixScreen sizes spacing and padding from the display's DPI (dots per inch). On unusual or high-density panels the auto-detected DPI can be off, so the layout is scaled too large or too small.
+In 1.0 the interface is sized by the screen's resolution alone. Each resolution falls into a layout size, and that size sets the dimensions of buttons, text and spacing. There is no scale setting in 1.0; a UI Scale setting arrives in 1.1.
 
-**Fix:** Override the DPI in your `helixscreen.env` file (typically `~/helixscreen/config/helixscreen.env`), then restart HelixScreen. The default is `160`; valid range is `50` to `500`.
+`HELIX_DPI` does not fix this. It changes a few of LVGL's built-in paddings and nothing else, so its effect is barely visible.
 
-- **Everything too large / cramped / overflowing** — set a **lower** DPI:
-  ```
-  HELIX_DPI=100
-  ```
-- **Everything too small / lots of empty space** — set a **higher** DPI:
-  ```
-  HELIX_DPI=200
-  ```
-
-Restart after editing:
-```bash
-sudo systemctl restart helixscreen
-```
-
-Adjust in steps (e.g. 110, 100, 90 or 160, 200, 240) until the interface looks right. Lower DPI = tighter/smaller; higher DPI = larger/roomier.
+**Fix:** The resolution is the lever. If it is mis-detected, set it with `HELIX_SCREEN_SIZE` (below). On a monitor that offers several modes, a higher resolution gives the same controls proportionally less of the screen, and a lower one makes them bigger.
 
 > **Tip:** If instead the *whole layout tier* is wrong — for example a compact phone-style layout on a big screen, or vice versa — the resolution rather than the DPI is being mis-detected. Force a layout size with `HELIX_SCREEN_SIZE` (named preset `micro`/`tiny`/`small`/`medium`/`large`/`xlarge`, or `WxH` like `1024x600`), which is the persistent equivalent of the `-s` flag covered in [Wrong screen size or resolution](#wrong-screen-size-or-resolution).
 
@@ -648,7 +634,7 @@ HelixScreen detects both orientations and adjusts the navigation bar and grid si
 **What you can do:**
 
 - **On a portrait panel, rotate it to landscape.** This is the well-tested path and what the Creality K2 does out of the box. Set `"rotate": 90` (or `270`) in the `display` section of your config — see [Display upside down or rotated](#display-upside-down-or-rotated).
-- **On an ultrawide screen,** there is no better fallback today. Reducing DPI (`HELIX_DPI`) can claw back some usable density, but the layout will still be a landscape layout stretched wide.
+- **On an ultrawide screen,** there is no better fallback today. The layout will be a landscape layout stretched wide.
 - **Force the standard layout** if the alpha layout is worse than the fallback: `--layout standard`, or `"layout": "standard"` in the `display` section.
 
 Contributions are very welcome here and only need XML, not C++ — see the [UI Contributor Guide](../devel/UI_CONTRIBUTOR_GUIDE.md).
@@ -802,6 +788,51 @@ To disable the swap (if auto-detection is wrong in the other direction), use `HE
 
 **Verifying the fix:**
 After restart, flags on the language selection screen should show correct colors (e.g., the French flag should be blue-white-red, not red-white-blue).
+
+---
+
+### Screen goes dark at sleep but the backlight stays on
+
+**Symptoms:**
+- When the screen sleeps (idle timeout), the picture goes black but the panel still glows: you can see the backlight shining through, especially in a dark room
+- Touching the screen wakes it normally
+
+**Cause:**
+By default, sleep turns the backlight off and leaves the panel powered, so waking is instant. Some panel controllers treat "backlight at zero" as "very dim" rather than "off", so the LEDs stay lit. Powering the whole panel down fixes these screens, but it breaks others (see the next section), so it is not the default.
+
+**Fix - power the panel down at sleep:**
+
+1. SSH into your printer
+2. Edit `settings.json` (typically `~/helixscreen/config/settings.json`; see [Configuration](CONFIGURATION.md) for other platforms)
+3. Find the `"display"` section and set:
+
+   ```json
+   "panel_power_off": 1
+   ```
+
+4. Save the file and restart HelixScreen:
+
+   ```bash
+   sudo systemctl restart helixscreen
+   ```
+
+   (Use your platform's restart command - see [Quick Debugging Guide](#quick-debugging-guide) for the SysV-init variants.)
+
+5. Let the screen sleep, then touch it to wake it.
+
+To confirm the setting was picked up, look for this line in the log after the restart:
+
+```
+[DisplayManager] Display power-off: true (config override)
+```
+
+If it says `false (config override)`, your display driver has no way to power the panel down, and this setting cannot help on your hardware.
+
+**If it makes things worse:**
+On some screens, a full power-down causes flashing colours, edges that glow white, a colour test pattern, or a screen that does not come back when touched. If you see any of these, SSH in, set `"panel_power_off": -1` (automatic) or remove the line, and restart HelixScreen. Screen sleep in **Settings → Display** can also be set to **Never** as a fallback.
+
+**Helping us fix it:**
+If `panel_power_off: 1` works for you, please tell us your printer and screen model (or send a debug bundle from **Settings → Help & About → Upload Debug Bundle**). We can then turn it on automatically for that hardware.
 
 ---
 
@@ -1004,7 +1035,7 @@ All three live under `input` in `settings.json` (path varies by platform — see
 
 > **Stop the service before editing `settings.json`** — the daemon rewrites the file periodically and your edits can be clobbered. Stop, edit, start.
 >
-> **Want to try a value before committing it?** All three are sliders under **Settings → System → Touch & Input** on the printer itself, so you can feel the change immediately and keep it only if it helps. `scroll_guard` and `scroll_limit` apply straight away; the panel prompts for a restart where one is needed.
+> **Want to try a value before committing it?** `scroll_limit` and `scroll_guard` are under **Settings → System → Touch & Input**; both take effect after a restart, which the panel prompts for. `scroll_throw` is edited in `settings.json`.
 
 FlashForge AD5M and AD5X presets ship with `scroll_guard: true` out of the box. Other platforms default to `false`.
 
@@ -1958,14 +1989,14 @@ When reporting issues, gather this information. **Most importantly, enable debug
 
 ### Enabling Debug Logging
 
-By default, HelixScreen only logs warnings and errors. To capture useful diagnostic information, you need to temporarily enable debug-level logging, reproduce the problem, then collect the logs.
+By default, HelixScreen logs warnings, errors and milestones (connections, panel changes, updates). To capture more diagnostic information, you need to temporarily enable debug-level logging, reproduce the problem, then collect the logs.
 
-**Quickest method:** Go to **Settings > System > Log Level** and select **Debug**. This takes effect immediately with no restart needed. Remember to set it back to **Warn** when done.
+**Quickest method:** Go to **Settings > System > Log Level** and select **Debug**. This takes effect immediately with no restart needed. Remember to set it back to **Info** when done.
 
 **Verbosity levels:**
 | Flag | Level | What it captures |
 |------|-------|-----------------|
-| *(none)* | WARN | Errors and warnings only (production default) |
+| *(none)* | INFO | Errors, warnings and milestones (production default) |
 | `-v` | INFO | Connection events, panel changes, milestones |
 | `-vv` | DEBUG | State changes, API calls, component init (**use this for bug reports**) |
 | `-vvv` | TRACE | Everything including LVGL internals (very verbose, rarely needed) |

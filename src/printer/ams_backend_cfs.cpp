@@ -829,6 +829,9 @@ AmsBackendCfs::parse_stock_box_status(const nlohmann::json& box_json,
         unit.first_slot_global_index = (n - 1) * 4;
         unit.connected = true;
         unit.topology = PathTopology::HUB;
+        // Every box feeds the printer's one extruder through the CFS hub, so all
+        // of them share toolhead 0; the T<n> numbers are routes into it.
+        unit.hub_tool_label = 0;
 
         // Firmware version and serial
         std::string ver = helix::json_util::safe_string(unit_json, "version", "-1");
@@ -1211,6 +1214,7 @@ AmsSystemInfo AmsBackendCfs::parse_flat_box_status(const nlohmann::json& box_jso
     unit.first_slot_global_index = 0;
     unit.connected = helix::json_util::safe_bool(box_json, "driver_ready", true);
     unit.topology = PathTopology::HUB;
+    unit.hub_tool_label = 0; // every box feeds the one extruder
 
     // Environment. Unlike the stock schema these are JSON numbers, not strings,
     // but safe_float accepts either — so a firmware revision that switches
@@ -1325,8 +1329,7 @@ AmsSystemInfo AmsBackendCfs::parse_flat_box_status(const nlohmann::json& box_jso
         }
     }
 
-    unit.slot_count = static_cast<int>(unit.slots.size());
-    info.total_slots = unit.slot_count;
+    info.total_slots = static_cast<int>(unit.slots.size());
 
     // loaded_slot is -1 when nothing is loaded. It indexes the same slots[]
     // array — including the external entry, which is not in our vector. A bay
@@ -1334,7 +1337,7 @@ AmsSystemInfo AmsBackendCfs::parse_flat_box_status(const nlohmann::json& box_jso
     // bypass sentinel (the same convention AFC and Happy Hare use, and what
     // AmsState's bypass subjects key off).
     int loaded_slot = helix::json_util::safe_int(box_json, "loaded_slot", -1);
-    if (loaded_slot >= 0 && loaded_slot < unit.slot_count) {
+    if (loaded_slot >= 0 && loaded_slot < info.total_slots) {
         info.current_slot = loaded_slot;
         info.current_tool = loaded_slot;
     } else if (loaded_slot >= 0 && loaded_slot == find_external_slot_index(box_json)) {
@@ -1342,7 +1345,34 @@ AmsSystemInfo AmsBackendCfs::parse_flat_box_status(const nlohmann::json& box_jso
         info.current_tool = -2;
     }
 
-    info.units.push_back(std::move(unit));
+    // slots[] lists every connected box's bays in one array, box by box, and a
+    // CFS box holds four, so bay i belongs to box i / 4 - the same numbering
+    // the stock parse gets from its per-box keys. One unit per box is what
+    // lets a chained setup reach the multi-unit overview. The payload carries a
+    // single temp/humidity reading with no box named, so it stays on the first
+    // unit rather than being presented as a per-box reading.
+    std::vector<SlotInfo> bays = std::move(unit.slots);
+    unit.slots.clear();
+    const int bay_count = static_cast<int>(bays.size());
+    for (int first = 0; first == 0 || first < bay_count; first += 4) {
+        const int n = first / 4 + 1;
+        AmsUnit box = unit;
+        box.unit_index = n - 1;
+        box.name = "T" + std::to_string(n);
+        box.display_name = "CFS Unit " + std::to_string(n);
+        box.first_slot_global_index = first;
+        if (n > 1) {
+            box.environment.reset();
+        }
+        for (int i = first; i < std::min(first + 4, bay_count); ++i) {
+            SlotInfo slot = std::move(bays[i]);
+            slot.slot_index = i - first;
+            slot.global_index = i;
+            box.slots.push_back(std::move(slot));
+        }
+        box.slot_count = static_cast<int>(box.slots.size());
+        info.units.push_back(std::move(box));
+    }
 
     // Same single-writer pass as the stock parse. The flat payload carries no
     // `map`, so tool_to_slot_map is empty here and identity_fallback supplies
@@ -1494,6 +1524,18 @@ void AmsBackendCfs::handle_status_update(const nlohmann::json& notification) {
             }
         }
 
+        // Stock frames are deltas: a frame naming only T3 says nothing about T1
+        // and T2, so the parse reads the box as the merge of every frame since
+        // the last flat one.
+        if (is_flat) {
+            stock_box_state_ = nlohmann::json::object();
+        } else {
+            if (!stock_box_state_.is_object()) {
+                stock_box_state_ = nlohmann::json::object();
+            }
+            stock_box_state_.merge_patch(box);
+        }
+
         if (is_full_update) {
             // Snapshot under the lock: pushed_material_codes_ is written by
             // push_slot_identity_to_firmware on the UI thread, and the parse
@@ -1505,7 +1547,7 @@ void AmsBackendCfs::handle_status_update(const nlohmann::json& notification) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 own_labels = pushed_material_codes_;
             }
-            auto new_info = parse_box_status(box, &own_labels);
+            auto new_info = parse_box_status(is_flat ? box : stock_box_state_, &own_labels);
 
             // Payload reads happen before the lock; the values converge under
             // it with everything else below.
@@ -3063,6 +3105,12 @@ std::string AmsBackendCfs::unload_gcode(CfsMacroVariant variant) {
         return wrap_with_envelope_k1("BOX_CUT_MATERIAL\n"
                                      "BOX_RETRUDE_MATERIAL");
     }
+    // The cut is BOX_CUT_MATERIAL, the firmware's own positioned cut. CR_BOX_CUT
+    // is a bare cutter primitive that strikes from wherever the toolhead
+    // stands, and needs the caller to stand at [box] pre_cut_pos first; the
+    // envelope leaves the head at the purge chute, where that strike runs into
+    // the frame on a K2 Pro.
+    //
     // Unload ends with CR_BOX_RETRUDE — the nozzle is empty (cut + retracted),
     // so no wipe needed. Skipping the wipe also avoids the wipe macro pushing
     // anything back into the hotend during a "filament-out" state.
@@ -3070,7 +3118,7 @@ std::string AmsBackendCfs::unload_gcode(CfsMacroVariant variant) {
     // BOX_QUIT_MATERIAL_RETRUDE_MATERIAL sequence (state-machine settle
     // after the cut).
     return wrap_with_park(variant,
-                          "CR_BOX_PRE_OPT\nCR_BOX_CUT\nBOX_MODE_WAIT\n"
+                          "CR_BOX_PRE_OPT\nBOX_CUT_MATERIAL\nBOX_MODE_WAIT\n"
                           "CR_BOX_RETRUDE\nCR_BOX_END_OPT",
                           /*wipe_after=*/false);
 }
@@ -3162,20 +3210,21 @@ std::string AmsBackendCfs::bypass_unload_gcode(CfsMacroVariant variant, bool has
     // Fallback for a CFS printer that does not define QUIT_MATERIAL. Same shape
     // as the vendor macro, built only from primitives this dialect's own unload
     // already emits, so it introduces no new command-presence risk:
-    // BOX_GO_TO_EXTRUDE_POS and BOX_MOVE_TO_SAFE_POS on both, and the dialect's
-    // cut (BOX_CUT_MATERIAL on K1, CR_BOX_CUT on K2 — the latter observed
-    // working under bypass on a K2 Plus, since the cutter is toolhead-side and
-    // needs no bay).
+    // BOX_GO_TO_EXTRUDE_POS and BOX_MOVE_TO_SAFE_POS on both, and
+    // BOX_CUT_MATERIAL, the firmware's positioned cut, on both. The cutter is
+    // toolhead-side and needs no bay. Never the K2's bare CR_BOX_CUT: it
+    // strikes from wherever the toolhead stands, and here that is the purge
+    // chute, not [box] pre_cut_pos.
     //
     // Deliberately NOT wrap_with_park()/wrap_with_envelope_k1(): those envelopes
     // exist to hand the box a bay operation (BOX_MODE_WAIT, CR_BOX_PRE_OPT /
     // CR_BOX_END_OPT, BOX_CHECK_MATERIAL), and a stood-down box is exactly what
     // has no answer for any of them. The vendor macro skips them too.
     //
-    const char* cut = variant == CfsMacroVariant::K1 ? "BOX_CUT_MATERIAL" : "CR_BOX_CUT";
     return std::string("SAVE_GCODE_STATE NAME=helix_cfs_bypass\n"
-                       "BOX_GO_TO_EXTRUDE_POS\n") +
-           cut + "\nM400\n" + long_retract_gcode() +
+                       "BOX_GO_TO_EXTRUDE_POS\n"
+                       "BOX_CUT_MATERIAL\nM400\n") +
+           long_retract_gcode() +
            "\nBOX_MOVE_TO_SAFE_POS\n"
            "RESTORE_GCODE_STATE NAME=helix_cfs_bypass";
 }
@@ -3219,11 +3268,13 @@ std::string AmsBackendCfs::swap_gcode(int idx, CfsMacroVariant variant) {
                                      "\nBOX_MATERIAL_FLUSH");
     }
     // Full swap: unload current (cut+retract) then load new slot, all in one
-    // session. BOX_MODE_WAIT interposed after CR_BOX_CUT (let the cutter
-    // recover) and before CR_BOX_EXTRUDE (new slot's state-machine handoff).
+    // session. The cut is BOX_CUT_MATERIAL for the same reason as unload_gcode:
+    // CR_BOX_CUT strikes from wherever the toolhead stands. BOX_MODE_WAIT
+    // interposed after the cut (let the cutter recover) and before
+    // CR_BOX_EXTRUDE (new slot's state-machine handoff).
     // Ends with flush of the NEW filament so wipe is required, same as load.
     return wrap_with_park(variant,
-                          "CR_BOX_PRE_OPT\nCR_BOX_CUT\nBOX_MODE_WAIT\n"
+                          "CR_BOX_PRE_OPT\nBOX_CUT_MATERIAL\nBOX_MODE_WAIT\n"
                           "CR_BOX_RETRUDE\nBOX_MODE_WAIT\n"
                           "CR_BOX_EXTRUDE TNN=" +
                               tnn + "\nCR_BOX_WASTE\nCR_BOX_FLUSH TNN=" + tnn + "\nCR_BOX_END_OPT",

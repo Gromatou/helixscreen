@@ -9,6 +9,7 @@
 #include "ui_ams_device_operations_overlay.h"
 
 #include "ui_ams_device_section_detail_overlay.h"
+#include "ui_ams_recover_state_modal.h"
 #include "ui_error_reporting.h"
 #include "ui_event_safety.h"
 #include "ui_modal.h"
@@ -516,7 +517,7 @@ void AmsDeviceOperationsOverlay::on_home_clicked(lv_event_t* e) {
     } else {
         AmsError result = backend->reset();
         if (result.success()) {
-            NOTIFY_INFO("{}", lv_tr("Homing AFC system..."));
+            NOTIFY_INFO("{}", lv_tr("Homing..."));
         } else {
             helix::ui::notify_ams_error(result, lv_tr("Home failed"));
         }
@@ -535,10 +536,12 @@ void AmsDeviceOperationsOverlay::on_recover_clicked(lv_event_t* e) {
     AmsBackend* backend = AmsState::instance().get_backend();
     if (!backend) {
         NOTIFY_WARNING("{}", lv_tr("No Multi-Filament System connected"));
+    } else if (AmsRecoverStateModal::show_owned()) {
+        // The modal sends the state the user asserts.
     } else {
         AmsError result = backend->recover();
         if (result.success()) {
-            NOTIFY_INFO("{}", lv_tr("Recovering AFC system..."));
+            NOTIFY_INFO("{}", lv_tr("Recovering..."));
         } else {
             helix::ui::notify_ams_error(result, lv_tr("Recovery failed"));
         }
@@ -560,7 +563,7 @@ void AmsDeviceOperationsOverlay::on_abort_clicked(lv_event_t* e) {
     } else {
         AmsError result = backend->cancel();
         if (result.success()) {
-            NOTIFY_INFO("{}", lv_tr("Aborting AFC operation..."));
+            NOTIFY_INFO("{}", lv_tr("Aborting..."));
         } else {
             helix::ui::notify_ams_error(result, lv_tr("Abort failed"));
         }

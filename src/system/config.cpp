@@ -28,7 +28,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <iomanip>
 #include <optional>
 #include <sstream>
 #include <sys/stat.h>
@@ -826,7 +825,15 @@ static void migrate_v16_to_v17(json& config) {
 /// (large coefficients are valid for resistive panels), so set a one-shot
 /// recheck_pending flag here; the display backend decides at boot — when it knows the
 /// device's resistive/capacitive nature and live ABS range — whether to invalidate.
+///
+/// Only a versioned document can hold a calibration the app captured. A versionless
+/// one is a shipped preset or an installer seed, whose calibration is solved for
+/// the current scaling, so it is left unflagged. The runner stamps config_version
+/// after the whole chain, so here it still reads the document's original version.
 static void migrate_v17_to_v18(json& config) {
+    if (helix::json_util::safe_int(config, "config_version", 0) == 0) {
+        return;
+    }
     // Guard ([L087]): an absent/default-constructed json is null, and writing into a
     // null via operator[] would replace it — but reading .value()/iterating a null
     // throws. Create the input/calibration objects only when missing, never overwrite
@@ -2122,6 +2129,22 @@ std::string Config::get_active_printer_id() const {
     return active_printer_id_;
 }
 
+std::string Config::get_printer_display_name(const std::string& printer_id,
+                                             const std::string& fallback) const {
+    const std::string base = "/printers/" + printer_id + "/";
+    for (const char* key : {"printer_name", "type", "moonraker_host"}) {
+        std::string value = get<std::string>(base + key, "");
+        if (!value.empty()) {
+            return value;
+        }
+    }
+    return fallback;
+}
+
+std::string Config::get_active_printer_name() const {
+    return get_printer_display_name(active_printer_id_, active_printer_id_);
+}
+
 bool Config::refresh_active_printer_id() {
     const std::string resolved = find_active_printer_key(data, active_printer_id_);
     active_printer_id_ = resolved;
@@ -2200,6 +2223,9 @@ void Config::remove_printer(const std::string& printer_id) {
 
     data["printers"].erase(printer_id);
     spdlog::info("[Config] Removed printer '{}'", printer_id);
+    if (printer_removed_hook_) {
+        printer_removed_hook_(printer_id);
+    }
 
     // If we just removed the active printer, switch to the first remaining one.
     // find_active_printer_key() skips the non-printer keys; taking
@@ -2394,14 +2420,15 @@ bool Config::save() {
 
     ensure_storage();
 
-    // Serialization is inside the handler: operator<< dumps with
-    // error_handler_t::strict, which throws json::type_error 316 on invalid
-    // UTF-8 in any stored string, and the stream buffer can throw bad_alloc on
-    // a RAM-constrained target. save() has 133 call sites, many inside LVGL
-    // event callbacks, where an escaping exception unwinds through a C frame.
+    // safe_dump() replaces invalid UTF-8 rather than throwing on it, so a stray
+    // byte in a printer name or SSID costs those bytes and not the user's whole
+    // save. The try stays for what serialization can still throw — bad_alloc on
+    // a RAM-constrained target — because save() has 133 call sites, many inside
+    // LVGL event callbacks, where an escaping exception unwinds through a C
+    // frame.
     try {
         std::ostringstream oss;
-        oss << std::setw(2) << data << std::endl;
+        oss << helix::json_util::safe_dump(data, 2) << std::endl;
         if (!storage_->store(oss.str())) {
             // FileConfigStorage (the default backend) already reports the specific
             // failure via NOTIFY_ERROR + CONFIG_RECORD_ERROR at the failing phase

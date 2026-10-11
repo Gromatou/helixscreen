@@ -37,6 +37,7 @@
 #include "system/log_path_probe.h"
 #include "system/sha256_util.h"
 #include "system/telemetry_manager.h"
+#include "system/tls_trust.h"
 #ifdef __ANDROID__
 #include "system/http_android.h"
 #endif
@@ -90,7 +91,7 @@ constexpr int RESTART_MARSHAL_TIMEOUT_MS = 5000;
 ///
 /// On Android, libhv is compiled without SSL (no NDK OpenSSL) so we route
 /// through Android's Java HttpURLConnection via JNI. Everywhere else we use
-/// libhv's `requests::`.
+/// helix::tls::trusted_request(), which verifies our servers' certificates.
 ///
 /// Returns {status_code, body}. A status_code of 0 means transport failure
 /// (DNS, connection, TLS, JNI) and body carries a short error message.
@@ -109,7 +110,7 @@ static std::pair<int, std::string> do_http_get(const std::string& url,
     if (!accept.empty()) {
         req->headers["Accept"] = accept;
     }
-    auto resp = requests::request(req);
+    auto resp = helix::tls::trusted_request(req);
     if (!resp) {
         return {0, ""};
     }
@@ -1208,17 +1209,7 @@ UpdateChecker::repair_release_info(const std::string& install_root) {
     // Resolve symlinks BEFORE renaming. The installer symlinks install-dir files
     // out to printer_data, and rename(2) onto a symlink replaces the symlink
     // itself rather than writing through it (prestonbrown/helixscreen#1176).
-    std::string target_path = path;
-    {
-        std::error_code ec;
-        if (std::filesystem::is_symlink(path, ec)) {
-            auto real = std::filesystem::canonical(path, ec);
-            if (!ec) {
-                spdlog::debug("[UpdateChecker] Resolved symlink {} -> {}", path, real.string());
-                target_path = real.string();
-            }
-        }
-    }
+    const std::string target_path = helix::paths::write_target(path);
 
     const std::string tmp_path = target_path + ".tmp";
     {
@@ -1230,7 +1221,7 @@ UpdateChecker::repair_release_info(const std::string& install_root) {
                          tmp_path, strerror(errno));
             return ReleaseInfoRepair::Failed;
         }
-        o << repaired.dump() << std::endl;
+        o << helix::json_util::safe_dump(repaired) << std::endl;
         o.flush();
         if (!o.good()) {
             spdlog::warn("[UpdateChecker] Cannot repair release_info.json — write {} failed: {}",
@@ -1378,8 +1369,8 @@ void UpdateChecker::start_download() {
     lock.unlock();
 
     // NEVER join the previous worker here. This runs on the LVGL thread from a
-    // button's event callback, and the worker can be parked inside libhv's
-    // SYNCHRONOUS requests::downloadFile(), whose req->timeout is 3600 seconds
+    // button's event callback, and the worker can be parked inside the
+    // SYNCHRONOUS helix::tls::trusted_download(), whose req->timeout is 3600 seconds
     // and which offers no abort hook at all — its progress callback returns
     // void. A join therefore freezes the touchscreen for up to an hour with no
     // repaint, which is the reported "froze and needed a power cycle".
@@ -1436,7 +1427,7 @@ void UpdateChecker::start_download() {
 
 void UpdateChecker::cancel_download() {
     download_cancelled_ = true;
-    // Deferred, not immediate. libhv's requests::downloadFile() runs to
+    // Deferred, not immediate. helix::tls::trusted_download() runs to
     // completion or timeout with no way to abort it, so the worker only
     // observes this flag once the transfer ends or the socket drops.
     // download_in_flight() stays true until then and start_download() refuses
@@ -1455,8 +1446,8 @@ void UpdateChecker::reap_download_thread(std::chrono::milliseconds wait) {
     const auto deadline = std::chrono::steady_clock::now() + wait;
     while (download_worker_active_.load()) {
         if (std::chrono::steady_clock::now() >= deadline) {
-            // Give up and detach. The worker is inside libhv's synchronous
-            // requests::downloadFile() (req->timeout = 3600s, no abort hook),
+            // Give up and detach. The worker is inside the synchronous
+            // trusted_download() (req->timeout = 3600s, no abort hook),
             // so joining would hang shutdown — and on the destructor path,
             // process exit — for up to an hour. This is the same escape hatch
             // HttpExecutor::stop() takes, for the same reason.
@@ -1558,7 +1549,7 @@ void UpdateChecker::do_download() {
     };
 
     // Download the file using libhv
-    size_t result = requests::downloadFile(url.c_str(), download_path.c_str(), progress_cb);
+    size_t result = helix::tls::trusted_download(url, download_path, progress_cb);
 
     if (shutting_down_.load()) {
         // reap_download_thread() may have detached this thread and shutdown()
@@ -2300,15 +2291,8 @@ void UpdateChecker::do_install(const std::string& tarball_path) {
     //
     // Write to ~/.helixscreen/ (survives PrivateTmp, accessible from update.service).
     // Also write legacy /tmp sentinel for backward compat with old service files.
+    write_self_restart_sentinel();
     {
-        std::string sentinel =
-            AppConstants::Update::backup_fallback_dir() + "/self_restart_sentinel";
-        std::ofstream ofs(sentinel);
-        if (ofs) {
-            spdlog::info("[UpdateChecker] Wrote self-restart sentinel: {}", sentinel);
-        } else {
-            spdlog::warn("[UpdateChecker] Failed to write sentinel: {}", sentinel);
-        }
         // Legacy location (may not work with PrivateTmp=true)
         std::ofstream ofs_legacy("/tmp/helixscreen_self_restart");
     }
@@ -2416,17 +2400,8 @@ void UpdateChecker::handle_external_update_complete() {
 
     // Write sentinel so helixscreen-update.service (systemd path watcher) skips
     // its restart — we're handling it here.  Same sentinel as self-update path.
-    {
-        std::string sentinel =
-            AppConstants::Update::backup_fallback_dir() + "/self_restart_sentinel";
-        std::ofstream ofs(sentinel);
-        if (ofs) {
-            spdlog::info("[UpdateChecker] Wrote self-restart sentinel: {}", sentinel);
-        } else {
-            spdlog::warn("[UpdateChecker] Failed to write sentinel: {}", sentinel);
-        }
-        std::ofstream ofs_legacy("/tmp/helixscreen_self_restart");
-    }
+    write_self_restart_sentinel();
+    { std::ofstream ofs_legacy("/tmp/helixscreen_self_restart"); }
 
     // Write restart marker so watchdog knows this exit is expected
     {
@@ -2476,6 +2451,23 @@ void UpdateChecker::handle_external_update_complete() {
 // ============================================================================
 // Static helpers
 // ============================================================================
+
+bool UpdateChecker::write_self_restart_sentinel() {
+    const std::string dir = AppConstants::Update::backup_fallback_dir();
+    const std::string sentinel = dir + "/self_restart_sentinel";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        spdlog::warn("[UpdateChecker] Failed to create {}: {}", dir, ec.message());
+    }
+    std::ofstream ofs(sentinel);
+    if (!ofs) {
+        spdlog::warn("[UpdateChecker] Failed to write sentinel: {}", sentinel);
+        return false;
+    }
+    spdlog::info("[UpdateChecker] Wrote self-restart sentinel: {}", sentinel);
+    return true;
+}
 
 std::string UpdateChecker::extract_installer_from_tarball(const std::string& tarball_path,
                                                           const std::string& extract_dir) {
@@ -2965,8 +2957,9 @@ std::string UpdateChecker::get_platform_display_name(const std::string& key) {
         return "FlashForge Adventurer 5X";
     if (key == "k1")
         return "Creality K1";
+    // One build serves the K2, K2 Pro and K2 Plus, so the name covers all three.
     if (key == "k2")
-        return "Creality K2 Plus";
+        return "Creality K2"; // i18n: do not translate
     if (key == "cc1")
         return "Elegoo Centauri Carbon";
     if (key == "snapmaker-u1")

@@ -33,8 +33,10 @@
 #include "ams_backend_cfs.h"
 #include "ams_backend_mock.h"
 #include "ams_backend_toolchanger.h"
+#include "ams_remap.h"
 #include "ams_types.h"
 #include "filament_op_slot_resolver.h"
+#include "toolchanger_addon.h"
 
 #include <functional>
 #include <string>
@@ -459,6 +461,50 @@ TEST_CASE("ToolChanger reset_tool_mappings restores identity in both directions"
         CHECK(slot_of_tool(info, i) == i);
     }
     require_symmetric(info);
+}
+
+TEST_CASE("ToolChanger without klipper-toolchanger has no remap route",
+          "[ams][toolchanger][tool_map][medusahc]") {
+    // A changer driven by its own T<n> macros (MedusaHC without
+    // klipper-toolchanger) has no ASSIGN_TOOL and no tool-number indirection:
+    // its T<n> macros name the physical tool outright. Klipper answers an
+    // unknown command by logging it and carrying on, so the refusal has to
+    // happen here - sending it reads as a successful remap, and the print runs
+    // on the firmware's own mapping with nothing to show for the user's pick.
+    ToolChangerMapProbe backend(6);
+    helix::toolchanger_addon::ToolCommands own_commands;
+    own_commands.present = true;
+    own_commands.provider_name = "MedusaHC";
+    own_commands.select_prefix = "T";
+    backend.set_tool_commands(own_commands);
+
+    CHECK(backend.get_remap_strategy() == AmsBackend::RemapStrategy::None);
+    CHECK_FALSE(helix::printer::can_remap(backend));
+    CHECK_FALSE(helix::printer::can_write_mapping_table(backend));
+
+    backend.captured.clear();
+    CHECK_FALSE(backend.set_tool_mapping(/*tool_number=*/2, /*slot_index=*/4).success());
+    CHECK(backend.captured.empty());
+
+    // The restore path is the same command and must refuse for the same reason.
+    backend.captured.clear();
+    backend.reset_tool_mappings();
+    CHECK(backend.captured.empty());
+}
+
+TEST_CASE("ToolChanger with klipper-toolchanger keeps its remap route",
+          "[ams][toolchanger][tool_map]") {
+    // resolve_tool_commands() returns an ABSENT capability when [toolchanger]
+    // is present, because SELECT_TOOL and ASSIGN_TOOL are then the machine's
+    // own answer. The default-constructed probe is that machine.
+    ToolChangerMapProbe backend(6);
+
+    CHECK(backend.get_remap_strategy() == AmsBackend::RemapStrategy::Native);
+    CHECK(helix::printer::can_write_mapping_table(backend));
+
+    backend.captured.clear();
+    REQUIRE(backend.set_tool_mapping(/*tool_number=*/2, /*slot_index=*/4).success());
+    CHECK(backend.captured.back() == "ASSIGN_TOOL TOOL=T4 N=2");
 }
 
 TEST_CASE("ToolChanger change_tool takes a SLOT and bypasses the remap",

@@ -7,14 +7,18 @@
 #include "ams_backend_happy_hare.h"
 #include "ams_state.h"
 #include "ams_types.h"
+#include "config.h"
 #include "hh_defaults.h"
 #include "moonraker_api.h"
 #include "moonraker_api_mock.h"
 #include "moonraker_client_mock.h"
 #include "printer_state.h"
+#include "test_helpers/config_test_access.h"
 #include "test_helpers/happy_hare_test_access.h"
 
 #include <algorithm>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "../catch_amalgamated.hpp"
@@ -145,7 +149,7 @@ class AmsBackendHappyHareTestHelper : public AmsBackendHappyHare {
     /**
      * @brief Populate system_info_.units AND the slot registry for multiple units.
      * Unlike initialize_test_units (registry only), this fills system_info_.units so
-     * per-unit logic (e.g. gates_suffix_for_unit) sees the multi-unit topology.
+     * per-unit logic (e.g. heater_suffix_locked) sees the multi-unit topology.
      * @param gates_per_unit Gate count for each unit; total gates = sum.
      */
     void initialize_test_gates_multi(const std::vector<int>& gates_per_unit) {
@@ -203,7 +207,21 @@ class AmsBackendHappyHareTestHelper : public AmsBackendHappyHare {
      */
     AmsError execute_gcode(const std::string& gcode) override {
         captured_gcodes.push_back(gcode);
+        if (!fail_gcode.empty() && gcode == fail_gcode) {
+            return AmsError(AmsResult::COMMAND_FAILED, "refused", "refused", "");
+        }
         return AmsErrorHelper::success();
+    }
+
+    void feed_notification(const nlohmann::json& notification) {
+        handle_status_update(notification);
+    }
+
+    /// A command execute_gcode() answers with an error.
+    std::string fail_gcode;
+
+    void set_dryer_supported() {
+        dryer_info_.supported = true;
     }
 
     /**
@@ -228,6 +246,10 @@ class AmsBackendHappyHareTestHelper : public AmsBackendHappyHare {
 
     void set_current_slot(int slot) {
         system_info_.current_slot = slot;
+    }
+
+    void set_supports_bypass(bool supported) {
+        system_info_.supports_bypass = supported;
     }
 
     void set_selector_type(const std::string& type) {
@@ -272,6 +294,21 @@ class AmsBackendHappyHareTestHelper : public AmsBackendHappyHare {
     /// Override the clock function for deterministic countdown tests
     void test_set_clock(std::function<std::time_t()> fn) {
         now_fn_ = std::move(fn);
+    }
+
+    auto& overrides_for_test() {
+        return user_overrides_;
+    }
+    auto& config_defaults_for_test() {
+        return config_defaults_;
+    }
+
+    /// Answer the connect-time config-defaults query with @p settings and the
+    /// live @p live_mmu_machine.
+    void
+    test_apply_config_defaults(const nlohmann::json& settings,
+                               const nlohmann::json& live_mmu_machine = nlohmann::json::object()) {
+        apply_config_defaults(settings, live_mmu_machine);
     }
 
     /// Expose apply_heater_config for testing (simulates the async configfile query result)
@@ -1306,12 +1343,12 @@ TEST_CASE("Happy Hare clog_detection action sends MMU_TEST_CONFIG", "[ams][happy
 
     auto result = helper.execute_device_action("clog_detection", std::string("Auto"));
     REQUIRE(result.success());
-    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG CLOG_DETECTION=2"));
+    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG ENABLE_CLOG_DETECTION=2"));
 
     helper.clear_captured_gcodes();
     result = helper.execute_device_action("clog_detection", std::string("Off"));
     REQUIRE(result.success());
-    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG CLOG_DETECTION=0"));
+    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG ENABLE_CLOG_DETECTION=0"));
 }
 
 // --- Phase 6: Dryer support ---
@@ -1927,7 +1964,7 @@ TEST_CASE("Happy Hare clog_detection Manual maps to 1", "[ams][happy_hare][v4][e
 
     auto result = helper.execute_device_action("clog_detection", std::string("Manual"));
     REQUIRE(result.success());
-    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG CLOG_DETECTION=1"));
+    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG ENABLE_CLOG_DETECTION=1"));
 }
 
 // --- Backwards compatibility: v3 sends nothing new ---
@@ -3332,7 +3369,7 @@ TEST_CASE("execute_device_action clog_detection saves override",
 
     auto result = helper.execute_device_action("clog_detection", std::any(std::string("Auto")));
     REQUIRE(result.success());
-    REQUIRE(helper.has_gcode_containing("CLOG_DETECTION=2"));
+    REQUIRE(helper.has_gcode_containing("ENABLE_CLOG_DETECTION=2"));
 }
 
 // ============================================================================
@@ -3404,10 +3441,11 @@ TEST_CASE("reapply_overrides batches into single MMU_TEST_CONFIG command",
     // Reapply should batch all overrides
     helper.test_reapply_overrides();
 
-    // Should have exactly one G-code with both params
-    REQUIRE(helper.captured_gcodes.size() == 1);
-    REQUIRE(helper.has_gcode_containing("GEAR_FROM_BUFFER_SPEED=200"));
-    REQUIRE(helper.has_gcode_containing("EXTRUDER_LOAD_SPEED=50"));
+    // One command per parameter: v3 refuses a whole MMU_TEST_CONFIG over any
+    // one name it does not take.
+    REQUIRE(helper.captured_gcodes.size() == 2);
+    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG GEAR_FROM_BUFFER_SPEED=200"));
+    REQUIRE(helper.has_gcode("MMU_TEST_CONFIG EXTRUDER_LOAD_SPEED=50"));
 }
 
 // ============================================================================
@@ -3673,7 +3711,7 @@ TEST_CASE("Happy Hare classify_error: runout pause is CRITICAL with recovery",
     CHECK(ev->detail.find("Runout detected on gate 0") != std::string::npos);
 }
 
-TEST_CASE("Happy Hare classify_error: recover gcode reflects loaded state",
+TEST_CASE("Happy Hare classify_error: recover lets HH detect the position even when loaded",
           "[ams][happy_hare][error-center]") {
     AmsBackendHappyHareTestHelper hh;
     hh.initialize_test_gates(4);
@@ -3688,11 +3726,11 @@ TEST_CASE("Happy Hare classify_error: recover gcode reflects loaded state",
     ctx.is_paused = true;
     auto ev = hh.classify_error("!! Clog detected", ctx);
     REQUIRE(ev.has_value());
-    bool has_recover_loaded = false;
+    bool has_recover = false;
     for (const auto& a : ev->recovery_actions)
-        if (a.gcode == "MMU_RECOVER LOADED=1")
-            has_recover_loaded = true;
-    CHECK(has_recover_loaded);
+        if (a.gcode == "MMU_RECOVER")
+            has_recover = true;
+    CHECK(has_recover);
 }
 
 TEST_CASE("Happy Hare classify_error: non-!! line and non-paused defer to generic",
@@ -4103,9 +4141,10 @@ TEST_CASE("Happy Hare v4 resolves the filament heater from live status",
     nlohmann::json configfile_settings = {
         {"mmu_machine",
          {{"happy_hare_version", "4.0.0"}, {"units", nlohmann::json::array({"unit0"})}}},
-        {"mmu", {{"heater_max_temp", 65.0}}}};
+        {"mmu_unit_parameters unit0", {{"heater_max_temp", 65.0}}}};
 
     nlohmann::json live_mmu_machine = {
+        {"happy_hare_version", "4.0.0"},
         {"num_units", 1},
         {"unit_0", {{"name", "unit0"}, {"filament_heater", "heater_generic box1_heater"}}}};
 
@@ -4119,7 +4158,7 @@ TEST_CASE("Happy Hare v4 resolves the filament heater from live status",
     REQUIRE(info.units[0].environment.has_value());
     CHECK(info.units[0].environment->temperature_c == Catch::Approx(52.0f));
 
-    // heater_max_temp still comes from [mmu], which v4 did not move.
+    // v4 keeps heater_max_temp on the unit's own parameters section.
     CHECK(helper.get_dryer_info().max_temp_c == Catch::Approx(65.0f));
 }
 
@@ -4148,4 +4187,720 @@ TEST_CASE("Happy Hare v3 config still resolves when no live unit object exists",
     REQUIRE(info.units[0].environment.has_value());
     CHECK(info.units[0].environment->temperature_c == Catch::Approx(24.5f));
     CHECK(info.units[0].environment->humidity_pct == Catch::Approx(38.0f));
+}
+
+// ============================================================================
+// recover_with_state() Tests
+// ============================================================================
+
+namespace {
+helix::RecoverStateRequest recover_req(int slot, bool bypass, std::optional<bool> loaded) {
+    helix::RecoverStateRequest r;
+    r.slot = slot;
+    r.bypass = bypass;
+    r.loaded = loaded;
+    return r;
+}
+} // namespace
+
+TEST_CASE("Happy Hare recover command names only what the user asserted",
+          "[ams][happy_hare][recovery]") {
+    struct Row {
+        int slot;
+        bool bypass;
+        std::optional<bool> loaded;
+        const char* expected;
+    };
+    // clang-format off
+    const Row rows[] = {
+        {-1, false, std::nullopt, "MMU_RECOVER"},
+        {-1, false, false,        "MMU_RECOVER LOADED=0"},
+        {-1, false, true,         "MMU_RECOVER LOADED=1"},
+        { 1, false, std::nullopt, "MMU_RECOVER GATE=1"},
+        { 1, false, false,        "MMU_RECOVER GATE=1 LOADED=0"},
+        { 1, false, true,         "MMU_RECOVER GATE=1 LOADED=1"},
+        { 0, false, std::nullopt, "MMU_RECOVER GATE=0"},
+        // Bypass replaces the gate: HH forces tool and gate to bypass itself.
+        {-1, true,  std::nullopt, "MMU_RECOVER BYPASS=1"},
+        { 1, true,  false,        "MMU_RECOVER BYPASS=1 LOADED=0"},
+        { 1, true,  true,         "MMU_RECOVER BYPASS=1 LOADED=1"},
+    };
+    // clang-format on
+    for (const auto& row : rows) {
+        INFO("slot=" << row.slot << " bypass=" << row.bypass);
+        CHECK(AmsBackendHappyHare::build_recover_command(
+                  recover_req(row.slot, row.bypass, row.loaded)) == row.expected);
+    }
+}
+
+TEST_CASE("Happy Hare recover_with_state sends the built command", "[ams][happy_hare][recovery]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.set_running(true);
+    helper.set_supports_bypass(true);
+
+    CHECK(helper.supports_recover_with_state());
+
+    REQUIRE(helper.recover_with_state(recover_req(2, false, true)).success());
+    REQUIRE(helper.recover_with_state(recover_req(-1, true, std::nullopt)).success());
+    CHECK(helper.captured_gcodes ==
+          std::vector<std::string>{"MMU_RECOVER GATE=2 LOADED=1", "MMU_RECOVER BYPASS=1"});
+}
+
+TEST_CASE("Happy Hare recover_with_state refuses what the MMU cannot be in",
+          "[ams][happy_hare][recovery]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+
+    SECTION("not running") {
+        CHECK_FALSE(helper.recover_with_state(recover_req(0, false, true)).success());
+    }
+    SECTION("gate out of range") {
+        helper.set_running(true);
+        CHECK(helper.recover_with_state(recover_req(4, false, std::nullopt)).result ==
+              AmsResult::INVALID_SLOT);
+    }
+    SECTION("bypass on an MMU without one") {
+        helper.set_running(true);
+        helper.set_supports_bypass(false);
+        CHECK_FALSE(helper.recover_with_state(recover_req(-1, true, std::nullopt)).success());
+    }
+    CHECK(helper.captured_gcodes.empty());
+}
+
+// ============================================================================
+// Parameter names by Happy Hare release (#1479)
+// ============================================================================
+
+namespace {
+
+nlohmann::json v3_settings(double version) {
+    return {{"mmu",
+             {{"happy_hare_version", version},
+              {"enable_clog_detection", 1},
+              {"flowguard_encoder_mode", 1},
+              {"flowguard_encoder_max_motion", 18.0}}}};
+}
+
+/// Happy Hare 4.0.0, one QIDI box: mmu_machine and configfile excerpts from a
+/// QIDI Q2 capture (prestonbrown/helixscreen#1479).
+const nlohmann::json kV4MmuMachine = {{"happy_hare_version", "4.0.0"},
+                                      {"unit_0",
+                                       {{"name", "unit0"},
+                                        {"display_name", "QIDI-0"},
+                                        {"num_gates", 4},
+                                        {"first_gate", 0},
+                                        {"selector_type", "VirtualSelector"},
+                                        {"filament_always_gripped", true},
+                                        {"has_bypass", false},
+                                        {"filament_buffer", false},
+                                        {"environment_sensor", "temperature_sensor unit0_Env"},
+                                        {"filament_heater", "heater_generic box1_heater"}}},
+                                      {"num_units", 1},
+                                      {"num_gates", 4}};
+const nlohmann::json kV4Settings = {
+    {"mmu_machine", {{"happy_hare_version", "4.0.0"}, {"units", {"unit0"}}}},
+    {"mmu_parameters",
+     {{"form_tip_macro", "_MMU_CUT_TIP_NOSKEW"},
+      {"extruder_load_speed", 12.0},
+      {"extruder_unload_speed", 12.0}}},
+    {"mmu_unit unit0", {{"selector_type", "VirtualSelector"}, {"toolhead", "default"}}},
+    {"mmu_unit_parameters unit0",
+     {{"gear_load_speed", 80.0},
+      {"gear_from_filament_buffer_speed", 150.0},
+      {"gear_unload_speed", 120.0},
+      {"sync_to_extruder", 1},
+      {"heater_max_temp", 65.0},
+      {"flowguard_encoder_mode", 2}}},
+    {"mmu_toolhead default",
+     {{"toolhead_extruder_to_nozzle", 87.0},
+      {"toolhead_sensor_to_nozzle", 1.0},
+      {"toolhead_entry_to_extruder", 6.0},
+      {"toolhead_ooze_reduction", 0.0}}}};
+
+} // namespace
+
+TEST_CASE("Happy Hare parameter names by release", "[ams][happy_hare][hh_v4]") {
+    using L = AmsBackendHappyHare::MachineLayout;
+    auto layout = [](double version) {
+        L l;
+        l.version_number = version;
+        l.v4 = version >= 4;
+        return l;
+    };
+    for (const double v : {2.73, 3.01, 3.40}) {
+        CAPTURE(v);
+        CHECK(AmsBackendHappyHare::param_name("clog_detection", layout(v)) ==
+              "enable_clog_detection");
+        CHECK(AmsBackendHappyHare::param_name("detection_length", layout(v)) ==
+              "mmu_calibration_clog_length");
+    }
+    CHECK(AmsBackendHappyHare::param_name("gear_unload_speed", layout(3.01)).empty());
+    CHECK(AmsBackendHappyHare::param_name("gear_unload_speed", layout(3.10)) ==
+          "gear_unload_speed");
+    CHECK(AmsBackendHappyHare::param_name("clog_detection", layout(3.42)) ==
+          "flowguard_encoder_mode");
+    CHECK(AmsBackendHappyHare::param_name("detection_length", layout(3.42)) ==
+          "flowguard_encoder_max_motion");
+    CHECK(AmsBackendHappyHare::param_name("clog_detection", layout(4.0)) ==
+          "flowguard_encoder_mode");
+    CHECK(AmsBackendHappyHare::param_name("gear_unload_speed", layout(0)) == "gear_unload_speed");
+    CHECK(AmsBackendHappyHare::param_name("clog_detection", layout(0)) == "enable_clog_detection");
+
+    CHECK(AmsBackendHappyHare::read_machine_layout(v3_settings(3.42), nlohmann::json::object())
+              .version == "3.42");
+    const auto v4 = AmsBackendHappyHare::read_machine_layout(kV4Settings, kV4MmuMachine);
+    CHECK(v4.v4);
+    CHECK(v4.unit_params_section == "mmu_unit_parameters unit0");
+    CHECK(v4.toolhead_section == "mmu_toolhead default");
+}
+
+TEST_CASE("Happy Hare clog detection is named the way each release takes it",
+          "[ams][happy_hare][hh_v4][clog]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.set_config_defaults_for_test();
+
+    SECTION("before 3.42: ENABLE_CLOG_DETECTION and the calibrated clog length") {
+        helper.test_apply_config_defaults(v3_settings(3.40));
+        helper.captured_gcodes.clear();
+        CHECK(helper.clog_detection_mode_gcode(1, 12.0f) ==
+              std::optional<std::string>(
+                  "MMU_TEST_CONFIG enable_clog_detection=1 mmu_calibration_clog_length=12.0"));
+        helper.execute_device_action("clog_detection", std::string("Auto"));
+        CHECK(helper.captured_gcodes ==
+              std::vector<std::string>{"MMU_TEST_CONFIG ENABLE_CLOG_DETECTION=2"});
+        CHECK_FALSE(helper.clog_detection_length_setting());
+        CHECK(helper.get_system_info().version == "3.4");
+    }
+    SECTION("3.42: the FlowGuard encoder parameters") {
+        helper.test_apply_config_defaults(v3_settings(3.42));
+        helper.captured_gcodes.clear();
+        CHECK(helper.clog_detection_mode_gcode(1, 12.0f) ==
+              std::optional<std::string>(
+                  "MMU_TEST_CONFIG flowguard_encoder_mode=1 flowguard_encoder_max_motion=12.0"));
+        helper.execute_device_action("clog_detection", std::string("Off"));
+        CHECK(helper.captured_gcodes ==
+              std::vector<std::string>{"MMU_TEST_CONFIG FLOWGUARD_ENCODER_MODE=0"});
+        CHECK(helper.clog_detection_length_setting() == std::optional<float>(18.0f));
+    }
+    SECTION("v4 unit with an encoder") {
+        auto mm = kV4MmuMachine;
+        mm["unit_0"]["selector_type"] = "LinearSelector";
+        auto settings = kV4Settings;
+        settings["mmu_unit unit0"]["encoder"] = "unit0_encoder";
+        helper.test_apply_config_defaults(settings, mm);
+        CHECK(helper.clog_detection_mode_gcode(2, 0.0f) ==
+              std::optional<std::string>("MMU_TEST_CONFIG flowguard_encoder_mode=2"));
+        CHECK(helper.get_system_info().version == "4.0.0");
+    }
+    SECTION("v4 unit with no encoder") {
+        helper.test_apply_config_defaults(kV4Settings, kV4MmuMachine);
+        CHECK_FALSE(helper.clog_detection_mode_gcode(2, 0.0f));
+    }
+}
+
+TEST_CASE("Happy Hare reapply leaves out a parameter the release has none for",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.set_config_defaults_for_test();
+    helper.test_apply_config_defaults(v3_settings(3.01));
+    auto& o = helper.overrides_for_test();
+    o = {};
+    o.gear_unload_speed = 90.0f;
+    o.gear_from_spool_speed = 70.0f;
+    o.clog_detection = 2;
+    helper.captured_gcodes.clear();
+    helper.test_reapply_overrides();
+    CHECK(helper.captured_gcodes ==
+          std::vector<std::string>{"MMU_TEST_CONFIG GEAR_FROM_SPOOL_SPEED=70",
+                                   "MMU_TEST_CONFIG ENABLE_CLOG_DETECTION=2"});
+}
+
+TEST_CASE("Happy Hare v4 reads clog detection mode from the encoder mode only",
+          "[ams][happy_hare][hh_v4][clog]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(2);
+    helper.test_parse_mmu_state(
+        {{"clog_detection_enabled", false},
+         {"flowguard", {{"active", false}, {"enabled", 1}, {"encoder_mode", 2}}},
+         {"encoder", {{"detection_mode", 1}}}});
+    auto info = helper.get_system_info();
+    CHECK(info.clog_detection == 2);
+    CHECK(info.encoder_info.detection_mode == 2);
+    CHECK(info.encoder_info.enabled);
+    // v3's integer wins whenever it is published.
+    helper.test_parse_mmu_state(
+        {{"clog_detection_enabled", 1}, {"flowguard", {{"encoder_mode", 2}}}});
+    CHECK(helper.get_system_info().encoder_info.detection_mode == 1);
+}
+
+TEST_CASE("Happy Hare v4 takes bypass support from the units, not printer.mmu",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    SECTION("status first, then config") {
+        helper.test_parse_mmu_state({{"has_bypass", true}});
+        helper.test_apply_config_defaults(kV4Settings, kV4MmuMachine);
+        CHECK_FALSE(helper.get_system_info().supports_bypass);
+        // printer.mmu.has_bypass stays a constant true on later frames.
+        helper.test_parse_mmu_state({{"has_bypass", true}});
+        CHECK_FALSE(helper.get_system_info().supports_bypass);
+    }
+    SECTION("a unit with a bypass") {
+        auto mm = kV4MmuMachine;
+        mm["unit_0"]["has_bypass"] = true;
+        helper.test_apply_config_defaults(kV4Settings, mm);
+        helper.test_parse_mmu_state({{"has_bypass", true}});
+        CHECK(helper.get_system_info().supports_bypass);
+    }
+    SECTION("v3 still follows printer.mmu.has_bypass") {
+        helper.test_apply_config_defaults(v3_settings(3.42));
+        helper.test_parse_mmu_state({{"has_bypass", true}});
+        CHECK(helper.get_system_info().supports_bypass);
+        helper.test_parse_mmu_state({{"has_bypass", false}});
+        CHECK_FALSE(helper.get_system_info().supports_bypass);
+    }
+}
+
+TEST_CASE("Happy Hare v4 reads its tunables from the split config sections (#1479)",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.test_apply_config_defaults(kV4Settings, kV4MmuMachine);
+    helper.test_apply_heater_config(kV4Settings, kV4MmuMachine);
+    CHECK(helper.get_dryer_info().max_temp_c == Catch::Approx(65.0f));
+    const auto& d = helper.config_defaults_for_test();
+    CHECK(d.loaded);
+    CHECK(d.gear_from_spool_speed == Catch::Approx(80.0f));
+    CHECK(d.gear_from_buffer_speed == Catch::Approx(150.0f));
+    CHECK(d.gear_unload_speed == Catch::Approx(120.0f));
+    CHECK(d.extruder_load_speed == Catch::Approx(12.0f));
+    CHECK(d.toolhead_extruder_to_nozzle == Catch::Approx(87.0f));
+    CHECK(d.sync_to_extruder == 1);
+    CHECK(d.clog_detection == 2);
+}
+
+TEST_CASE("Happy Hare v3 config numbers load whether typed or strings",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.test_apply_config_defaults({{"mmu",
+                                        {{"happy_hare_version", 3.42},
+                                         {"gear_from_spool_speed", 75.0},
+                                         {"gear_unload_speed", "95"}}}});
+    const auto& d = helper.config_defaults_for_test();
+    CHECK(d.gear_from_spool_speed == Catch::Approx(75.0f));
+    CHECK(d.gear_unload_speed == Catch::Approx(95.0f));
+}
+
+namespace {
+
+/// Snapshots the Config singleton's data and save path for one test, and
+/// points saves at no file, so no write reaches disk and nothing a test sets
+/// outlives it, even when a REQUIRE throws.
+class ScopedConfig {
+  public:
+    ScopedConfig()
+        : config_(helix::Config::get_instance()), data_(helix::ConfigTestAccess::data(*config_)),
+          path_(helix::ConfigTestAccess::path(*config_)) {
+        helix::ConfigTestAccess::path(*config_).clear(); // save() skips an empty path
+    }
+    ~ScopedConfig() {
+        helix::ConfigTestAccess::data(*config_) = data_;
+        helix::ConfigTestAccess::path(*config_) = path_;
+    }
+    ScopedConfig(const ScopedConfig&) = delete;
+    ScopedConfig& operator=(const ScopedConfig&) = delete;
+    helix::Config* operator->() const {
+        return config_;
+    }
+
+  private:
+    helix::Config* config_;
+    nlohmann::json data_;
+    std::string path_;
+};
+
+} // namespace
+
+TEST_CASE("Happy Hare keeps an override saved against the built-in default",
+          "[ams][happy_hare][hh_v4]") {
+    ScopedConfig config;
+    // Saved while the printer's own default could not be read: the record names
+    // the built-in 60, the printer's real default is 80.
+    config->set<float>("/hh_overrides/gear_from_spool_speed/value", 95.0f);
+    config->set<float>("/hh_overrides/gear_from_spool_speed/config_default", 60.0f);
+    // Saved against a real default the printer has since changed: stale.
+    config->set<float>("/hh_overrides/gear_unload_speed/value", 99.0f);
+    config->set<float>("/hh_overrides/gear_unload_speed/config_default", 111.0f);
+
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.test_apply_config_defaults(kV4Settings, kV4MmuMachine);
+
+    const auto& o = helper.overrides_for_test();
+    REQUIRE(o.gear_from_spool_speed);
+    CHECK(*o.gear_from_spool_speed == Catch::Approx(95.0f));
+    CHECK(config->get<float>("/hh_overrides/gear_from_spool_speed/config_default", 0.0f) ==
+          Catch::Approx(80.0f));
+    CHECK_FALSE(o.gear_unload_speed);
+    CHECK(config->get_path().empty()); // the migration's save() wrote no file
+}
+
+TEST_CASE("Happy Hare selector speed override survives a restart under either key",
+          "[ams][happy_hare][hh_v4]") {
+    ScopedConfig config;
+    SECTION("saved by the slider") {
+        AmsBackendHappyHareTestHelper writer;
+        writer.initialize_test_gates(4);
+        writer.set_config_defaults_for_test();
+        REQUIRE(writer.execute_device_action("selector_speed", std::any(180.0)).success());
+        CHECK(config->exists("/hh_overrides/selector_move_speed/value"));
+    }
+    SECTION("an older record under the action id") {
+        config->set<float>("/hh_overrides/selector_speed/value", 180.0f);
+        config->set<float>("/hh_overrides/selector_speed/config_default", 200.0f);
+    }
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.test_apply_config_defaults(
+        {{"mmu", {{"happy_hare_version", 3.42}, {"selector_move_speed", 200.0}}}});
+    const auto& o = helper.overrides_for_test();
+    REQUIRE(o.selector_move_speed);
+    CHECK(*o.selector_move_speed == Catch::Approx(180.0f));
+}
+
+namespace {
+bool action_enabled(const AmsBackendHappyHareTestHelper& helper, const std::string& id) {
+    for (const auto& a : helper.get_device_actions()) {
+        if (a.id == id) {
+            return a.enabled;
+        }
+    }
+    FAIL("no device action " << id);
+    return false;
+}
+} // namespace
+
+TEST_CASE("Happy Hare v4 leaves out what the unit's hardware cannot take",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    // The QIDI unit: hub, always gripped, no buffer, no encoder, no toolhead sensor.
+    helper.test_apply_config_defaults(kV4Settings, kV4MmuMachine);
+    helper.test_parse_mmu_state({{"sensors", {{"extruder", true}, {"toolhead", nullptr}}}});
+    helper.captured_gcodes.clear();
+
+    helper.execute_device_action("gear_from_spool_speed", std::any(70.0));
+    CHECK_FALSE(helper.execute_device_action("gear_from_buffer_speed", std::any(160.0)));
+    CHECK_FALSE(helper.execute_device_action("sync_to_extruder", std::any(true)));
+    CHECK_FALSE(helper.execute_device_action("toolhead_sensor_to_nozzle", std::any(30.0)));
+    helper.execute_device_action("toolhead_entry_to_extruder", std::any(6.0));
+    CHECK(helper.captured_gcodes ==
+          std::vector<std::string>{"MMU_TEST_CONFIG GEAR_LOAD_SPEED=70",
+                                   "MMU_TEST_CONFIG TOOLHEAD_ENTRY_TO_EXTRUDER=6.0"});
+
+    for (const char* id :
+         {"servo_up", "selector_speed", "calibrate_encoder", "calibrate_gates", "clog_detection",
+          "sync_to_extruder", "gear_from_buffer_speed", "toolhead_sensor_to_nozzle"}) {
+        INFO(id);
+        CHECK_FALSE(action_enabled(helper, id));
+    }
+    CHECK(action_enabled(helper, "toolhead_entry_to_extruder"));
+
+    auto& o = helper.overrides_for_test();
+    o = {};
+    o.gear_from_spool_speed = 75.0f;
+    o.sync_to_extruder = 0;
+    o.gear_from_buffer_speed = 160.0f;
+    o.clog_detection = 2;
+    helper.captured_gcodes.clear();
+    helper.test_reapply_overrides();
+    CHECK(helper.captured_gcodes == std::vector<std::string>{"MMU_TEST_CONFIG GEAR_LOAD_SPEED=75"});
+}
+
+TEST_CASE("Happy Hare v3 sends selector_move_speed only to a moving selector",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.test_apply_config_defaults(v3_settings(3.42));
+    helper.set_selector_type("VirtualSelector");
+    auto& o = helper.overrides_for_test();
+    o = {};
+    o.selector_move_speed = 180.0f;
+    o.gear_unload_speed = 90.0f;
+    helper.captured_gcodes.clear();
+    helper.test_reapply_overrides();
+    CHECK(helper.captured_gcodes ==
+          std::vector<std::string>{"MMU_TEST_CONFIG GEAR_UNLOAD_SPEED=90"});
+}
+
+// ============================================================================
+// Multi-unit v4: UNIT= targeting (#1479)
+// ============================================================================
+
+namespace {
+
+/// A 6-gate ERCF (servo selector, encoder, buffer) then a 4-gate Box Turtle
+/// (hub, always gripped, per-gate heaters), as v4's MmuUnit.get_status()
+/// publishes them; not a capture.
+const nlohmann::json kV4TwoUnitMachine = {
+    {"happy_hare_version", "4.0.0"},
+    {"unit_0",
+     {{"name", "ercf"},
+      {"num_gates", 6},
+      {"first_gate", 0},
+      {"selector_type", "LinearServoSelector"},
+      {"filament_always_gripped", false},
+      {"has_bypass", true},
+      {"filament_buffer", true}}},
+    {"unit_1",
+     {{"name", "bt"},
+      {"num_gates", 4},
+      {"first_gate", 6},
+      {"selector_type", "VirtualSelector"},
+      {"filament_always_gripped", true},
+      {"has_bypass", false},
+      {"filament_buffer", false},
+      {"filament_heaters",
+       {"heater_generic bt_heat0", "heater_generic bt_heat0", "heater_generic bt_heat1",
+        "heater_generic bt_heat1"}}}},
+    {"num_units", 2},
+    {"num_gates", 10}};
+const nlohmann::json kV4TwoUnitSettings = {
+    {"mmu_machine", {{"happy_hare_version", "4.0.0"}, {"units", {"ercf", "bt"}}}},
+    {"mmu_parameters", {{"form_tip_macro", "_MMU_FORM_TIP"}}},
+    {"mmu_unit ercf", {{"encoder", "ercf_encoder"}, {"toolhead", "default"}}},
+    {"mmu_unit bt", {{"toolhead", "default"}}},
+    {"mmu_unit_parameters ercf", {{"gear_load_speed", 90.0}}},
+    {"mmu_unit_parameters bt", {{"gear_load_speed", 70.0}}}};
+
+} // namespace
+
+TEST_CASE("Happy Hare names the unit only where v4 multi-unit requires it",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(10);
+    helper.set_running(true);
+    helper.set_config_defaults_for_test();
+    helper.test_apply_config_defaults(kV4TwoUnitSettings, kV4TwoUnitMachine);
+    helper.set_dryer_supported();
+    // The Box Turtle is selected.
+    helper.test_parse_mmu_state({{"unit", 1}, {"gate", 7}});
+    helper.captured_gcodes.clear();
+
+    CHECK(helper.reset().success());
+    helper.execute_device_action("motors_toggle", std::any(false));
+    CHECK(helper.stop_drying(-1).success());
+    helper.execute_device_action("servo_up", {});
+    helper.execute_device_action("calibrate_gates", {});
+    helper.execute_device_action("calibrate_bowden", {});
+    helper.execute_device_action("test_grip", {});
+    helper.execute_device_action("gear_from_spool_speed", std::any(70.0));
+    helper.execute_device_action("extruder_load_speed", std::any(20.0));
+    helper.execute_device_action("sync_to_extruder", std::any(true));
+    CHECK(helper.captured_gcodes ==
+          std::vector<std::string>{"MMU_HOME UNIT=ALL", "MMU_MOTORS_OFF UNIT=ALL",
+                                   // Only the Box Turtle has heaters.
+                                   "MMU_HEATER STOP=1 UNIT=1 GATES=6,7,8,9",
+                                   // The selected Box Turtle has no servo, encoder or ungripped
+                                   // drive, so those go to the ERCF.
+                                   "MMU_SERVO POS=up UNIT=0", "MMU_CALIBRATE_GATE ALL=1 UNIT=0",
+                                   "MMU_CALIBRATE_BOWDEN", "MMU_TEST_GRIP UNIT=1",
+                                   "MMU_TEST_CONFIG GEAR_LOAD_SPEED=70 UNIT=1",
+                                   "MMU_TEST_CONFIG EXTRUDER_LOAD_SPEED=20",
+                                   "MMU_TEST_CONFIG SYNC_TO_EXTRUDER=1 UNIT=0"});
+}
+
+TEST_CASE("Happy Hare v4 whole-machine drying stops the units it started when one refuses",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(10);
+    auto mm = kV4TwoUnitMachine;
+    mm["unit_0"]["filament_heater"] = "heater_generic ercf_heater";
+    helper.test_apply_config_defaults(kV4TwoUnitSettings, mm);
+    helper.set_dryer_supported();
+    helper.fail_gcode = "MMU_HEATER DRY=1 TEMP=50 TIMER=60 UNIT=1 GATES=6,7,8,9";
+    helper.captured_gcodes.clear();
+
+    CHECK_FALSE(helper.start_drying(50.0f, 60, -1, -1));
+    CHECK(helper.captured_gcodes ==
+          std::vector<std::string>{"MMU_HEATER DRY=1 TEMP=50 TIMER=60 UNIT=0 GATES=0,1,2,3,4,5",
+                                   "MMU_HEATER DRY=1 TEMP=50 TIMER=60 UNIT=1 GATES=6,7,8,9",
+                                   "MMU_HEATER STOP=1 UNIT=0 GATES=0,1,2,3,4,5"});
+}
+
+TEST_CASE("Happy Hare single-unit commands carry no UNIT", "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.set_running(true);
+    helper.set_config_defaults_for_test();
+    helper.set_dryer_supported();
+    SECTION("v3") {
+        helper.test_apply_config_defaults(v3_settings(3.42));
+        helper.captured_gcodes.clear();
+        CHECK(helper.reset().success());
+        helper.execute_device_action("calibrate_gates", {});
+        CHECK(helper.stop_drying(0).success());
+        CHECK(helper.captured_gcodes ==
+              std::vector<std::string>{"MMU_HOME", "MMU_CALIBRATE_GATES", "MMU_HEATER STOP=1"});
+    }
+    SECTION("v4") {
+        auto mm = kV4MmuMachine;
+        mm["unit_0"]["selector_type"] = "LinearSelector";
+        auto settings = kV4Settings;
+        settings["mmu_unit unit0"]["encoder"] = "unit0_encoder";
+        helper.test_apply_config_defaults(settings, mm);
+        helper.captured_gcodes.clear();
+        CHECK(helper.reset().success());
+        helper.execute_device_action("calibrate_gates", {});
+        CHECK(helper.stop_drying(0).success());
+        CHECK(helper.captured_gcodes == std::vector<std::string>{"MMU_HOME",
+                                                                 "MMU_CALIBRATE_GATE ALL=1",
+                                                                 "MMU_HEATER STOP=1"});
+    }
+}
+
+// ============================================================================
+// v4 per-gate entry sensors (#1479)
+// ============================================================================
+
+TEST_CASE("Happy Hare v4 reads per-gate entry sensors from their Klipper objects",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    auto feed = [&](const nlohmann::json& params) {
+        nlohmann::json notification;
+        notification["params"] = nlohmann::json::array({params, 0.0});
+        helper.feed_notification(notification);
+    };
+    // The first frame: printer.mmu with gate 1 selected (generic sensor names
+    // plus the mmu_pre_gate alias) beside the entry sensor objects.
+    feed({{"mmu",
+           {{"gate_status", {1, 1, 0, 1}},
+            {"gate", 1},
+            {"sensors", {{"mmu_entry", true}, {"mmu_pre_gate", true}, {"extruder", true}}}}},
+          {"filament_switch_sensor mmu_entry_0", {{"filament_detected", true}, {"enabled", true}}},
+          {"filament_switch_sensor mmu_entry_1", {{"filament_detected", true}, {"enabled", true}}},
+          {"filament_switch_sensor mmu_entry_2", {{"filament_detected", false}, {"enabled", true}}},
+          {"filament_switch_sensor mmu_entry_3",
+           {{"filament_detected", true}, {"enabled", false}}}});
+
+    auto triggered = [&](int g) { return helper.get_slot_entry(g)->sensors.pre_gate_triggered; };
+    CHECK(helper.slot_has_prep_sensor(0));
+    CHECK(triggered(0));
+    CHECK_FALSE(triggered(2));
+    CHECK_FALSE(triggered(3)); // detected, but disabled
+
+    // A later sensors dict naming only the selected gate leaves the rest alone.
+    helper.test_parse_mmu_state({{"sensors", {{"mmu_entry", false}, {"mmu_pre_gate", false}}}});
+    CHECK(triggered(0));
+
+    // Deltas, one field at a time.
+    feed({{"filament_switch_sensor mmu_entry_3", {{"enabled", true}}}});
+    CHECK(triggered(3));
+    feed({{"filament_switch_sensor mmu_entry_0", {{"filament_detected", false}}}});
+    CHECK_FALSE(triggered(0));
+}
+
+TEST_CASE("Happy Hare v4 sensors dict with no gate selected names gates mmu_entry_N",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.test_parse_mmu_state(
+        {{"gate_status", {1, 1, 0, 1}},
+         {"gate", -1},
+         {"sensors", {{"mmu_entry_0", true}, {"mmu_entry_1", false}, {"mmu_shared_exit", false}}}});
+    CHECK(helper.get_slot_entry(0)->sensors.pre_gate_triggered);
+    CHECK(helper.slot_has_prep_sensor(1));
+    CHECK_FALSE(helper.get_slot_entry(1)->sensors.pre_gate_triggered);
+    CHECK_FALSE(helper.slot_has_prep_sensor(3));
+}
+
+// ============================================================================
+// v4 null telemetry and the eSpooler list (#1479)
+// ============================================================================
+
+TEST_CASE("Happy Hare v4 null telemetry clears the selected unit's readings",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    // A unit with a buffer and an encoder is selected...
+    helper.test_parse_mmu_state(
+        {{"sync_feedback_bias_modelled", 0.25},
+         {"sync_feedback_bias_raw", 0.5},
+         {"encoder", {{"flow_rate", 95}}},
+         {"flowguard", {{"enabled", true}, {"level", 0.4}, {"encoder_mode", 2}}}});
+    auto info = helper.get_system_info();
+    REQUIRE(info.sync_feedback_bias == Catch::Approx(0.25f));
+    REQUIRE(info.encoder_info.enabled);
+    REQUIRE(info.flowguard_info.enabled);
+
+    // ...then one with neither: its nulls are "no reading", not the last unit's.
+    helper.test_parse_mmu_state({{"sync_feedback_bias_modelled", nullptr},
+                                 {"sync_feedback_bias_raw", nullptr},
+                                 {"encoder", nullptr},
+                                 {"flowguard", nullptr}});
+    info = helper.get_system_info();
+    CHECK(info.sync_feedback_bias == Catch::Approx(-2.0f));
+    CHECK(info.sync_feedback_bias_raw == Catch::Approx(-2.0f));
+    CHECK_FALSE(info.encoder_info.enabled);
+    CHECK_FALSE(info.flowguard_info.enabled);
+    CHECK(info.encoder_info.flow_rate == 95);
+    CHECK(info.flowguard_info.level == Catch::Approx(0.4f));
+}
+
+TEST_CASE("Happy Hare encoder-only flowguard is not buffer FlowGuard", "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.test_parse_mmu_state({{"flowguard", {{"enabled", true}, {"level", 0.1}}}});
+    REQUIRE(helper.get_system_info().flowguard_info.enabled);
+    helper.test_parse_mmu_state(
+        {{"flowguard", {{"active", false}, {"enabled", true}, {"encoder_mode", 2}}}});
+    CHECK_FALSE(helper.get_system_info().flowguard_info.enabled);
+    CHECK(helper.get_system_info().encoder_info.enabled); // mode 2
+}
+
+TEST_CASE("Happy Hare eSpooler list is read per gate only when it lines up",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    SECTION("v3 list covering two of four gates") {
+        helper.test_parse_mmu_state({{"gate_status", {1, 1, 1, 1}},
+                                     {"gate", 1},
+                                     {"espooler", {"rewind", "assist"}},
+                                     {"espooler_active", "print"}});
+        CHECK(helper.get_system_info().espooler_state == "print");
+        helper.test_parse_mmu_state({{"espooler", {"off", "rewind", "off", "off"}}});
+        CHECK(helper.get_system_info().espooler_state == "rewind");
+    }
+    SECTION("v4: the selected gate's entry, as the gate moves") {
+        helper.test_apply_config_defaults(kV4Settings, kV4MmuMachine);
+        helper.test_parse_mmu_state({{"gate_status", {1, 1, 1, 1}},
+                                     {"gate", 1},
+                                     {"espooler", {"", "assist", "off", "rewind"}},
+                                     {"espooler_active", ""}});
+        CHECK(helper.get_system_info().espooler_state == "assist");
+        helper.test_parse_mmu_state({{"gate", 3}});
+        CHECK(helper.get_system_info().espooler_state == "rewind");
+        helper.test_parse_mmu_state({{"gate", -1}});
+        CHECK(helper.get_system_info().espooler_state.empty());
+    }
+}
+
+TEST_CASE("Happy Hare v4 status frame names v4 before the config query answers",
+          "[ams][happy_hare][hh_v4]") {
+    AmsBackendHappyHareTestHelper helper;
+    helper.initialize_test_gates(4);
+    helper.set_config_defaults_for_test();
+    // The first v4 frame says has_bypass: true for every install.
+    helper.test_parse_mmu_state({{"has_bypass", true}, {"tangle_prevention", nullptr}});
+    CHECK_FALSE(helper.get_system_info().supports_bypass);
+    helper.captured_gcodes.clear();
+    helper.execute_device_action("gear_from_spool_speed", std::any(70.0));
+    CHECK(helper.captured_gcodes == std::vector<std::string>{"MMU_TEST_CONFIG GEAR_LOAD_SPEED=70"});
+    // The query then names the units.
+    auto mm = kV4MmuMachine;
+    mm["unit_0"]["has_bypass"] = true;
+    helper.test_apply_config_defaults(kV4Settings, mm);
+    CHECK(helper.get_system_info().supports_bypass);
 }

@@ -1995,6 +1995,14 @@ void PrintStatusPanel::handle_tune_button() {
     get_print_tune_overlay().show(parent_screen_, api_, printer_state_);
 }
 
+std::string PrintStatusPanel::reprint_filename() const {
+    // print_stats names the copy that ran, which for a print this app
+    // rewrote is a temp file deleted when the print ends. The effective
+    // identity is the original.
+    const std::string& original = printer_state_.get_effective_print_filename();
+    return original.empty() ? current_print_filename_ : original;
+}
+
 void PrintStatusPanel::handle_reprint_button() {
     // Startup grace period: reject phantom clicks during early boot
     auto elapsed = std::chrono::steady_clock::now() - AppConstants::Startup::PROCESS_START_TIME;
@@ -2005,10 +2013,10 @@ void PrintStatusPanel::handle_reprint_button() {
         return;
     }
 
-    spdlog::info("[{}] Reprint button clicked - reprinting: {}", get_name(),
-                 current_print_filename_);
+    const std::string filename = reprint_filename();
+    spdlog::info("[{}] Reprint button clicked - reprinting: {}", get_name(), filename);
 
-    if (current_print_filename_.empty()) {
+    if (filename.empty()) {
         spdlog::warn("[{}] No filename to reprint", get_name());
         NOTIFY_WARNING(lv_tr("No file to reprint"));
         return;
@@ -2022,8 +2030,6 @@ void PrintStatusPanel::handle_reprint_button() {
 
     // Disable button immediately to prevent double-press
     ui_set_button_enabled(btn_cancel_, false);
-
-    std::string filename = current_print_filename_;
 
     // Route through PrintStartController so reprint gets the Snapmaker U1 native
     // pre-print send (SET_PRINT_USED_EXTRUDERS ...) that suppresses a spurious
@@ -3804,67 +3810,85 @@ void PrintStatusPanel::load_gcode_for_viewing(const std::string& filename) {
         load_existing_gcode_path(metadata_filename, "gcodes", filename);
     };
 
-    auto ends_with_3mf = [](const std::string& name) {
-        if (name.size() < 4) {
-            return false;
-        }
-        const size_t pos = name.size() - 4;
-        return (name[pos] == '.' && (name[pos + 1] == '3') &&
-                (name[pos + 2] == 'm' || name[pos + 2] == 'M') &&
-                (name[pos + 3] == 'f' || name[pos + 3] == 'F'));
-    };
-
-    if (ends_with_3mf(filename)) {
+    // A .3mf is a zip archive the viewer cannot read; its G-code is only on show
+    // when the firmware extracted the printing plate into the `.temp` root.
+    // Without that copy there is nothing to render, and the archive itself is
+    // never downloaded.
+    if (helix::gcode::is_3mf(filename)) {
+        // The reply can land after the print moved on: it then describes an
+        // earlier file and must not touch the current print's preview.
+        auto for_current_print = [this, filename]() {
+            const std::string& effective = printer_state_.get_effective_print_filename();
+            if (!effective.empty() && effective != filename) {
+                spdlog::debug("[{}] Ignoring .temp reply for '{}' (showing '{}')", get_name(),
+                              filename, effective);
+                return false;
+            }
+            return true;
+        };
+        // Same rule as a metadata miss: a render already on screen stays.
+        auto keep_thumbnail = [this]() {
+            if (gcode_viewer_ && ui_gcode_viewer_has_content(gcode_viewer_)) {
+                return;
+            }
+            show_gcode_viewer(false);
+        };
         api_->files().list_files(
             ".temp", "", false,
-            [this, token, use_existing_download_path,
-             stream_if_safe](const std::vector<FileInfo>& files) {
-                token.defer("PrintStatusPanel::qidi_3mf_shadow_list_ok",
-                            [this, files, use_existing_download_path, stream_if_safe]() {
-                                spdlog::debug("[{}] .temp returned {} entries for QIDI native 3MF "
-                                              "preview lookup",
-                                              get_name(), files.size());
+            [this, token, filename, stream_if_safe, for_current_print,
+             keep_thumbnail](const std::vector<FileInfo>& files) {
+                token.defer(
+                    "PrintStatusPanel::qidi_3mf_shadow_list_ok",
+                    [this, filename, files, stream_if_safe, for_current_print, keep_thumbnail]() {
+                        if (!for_current_print()) {
+                            return;
+                        }
+                        spdlog::debug("[{}] .temp returned {} entries for QIDI native 3MF "
+                                      "preview lookup",
+                                      get_name(), files.size());
 
-                                // A multi-plate .3mf can leave several
-                                // shadow_native_plate_*.gcode files in .temp, and
-                                // Moonraker exposes no plate index for the active
-                                // print. The active plate's shadow is (re)written at
-                                // print start, so the newest-modified match is the
-                                // best proxy for "the plate currently printing".
-                                const FileInfo* best = nullptr;
-                                for (const auto& file : files) {
-                                    if (!helix::gcode::is_native_3mf_shadow(file.path)) {
-                                        continue;
-                                    }
-                                    if (best == nullptr || file.modified > best->modified) {
-                                        best = &file;
-                                    }
-                                }
+                        // A multi-plate .3mf can leave several
+                        // shadow_native_plate_*.gcode files in .temp, and
+                        // Moonraker exposes no plate index for the active
+                        // print. The active plate's shadow is (re)written at
+                        // print start, so the newest-modified match is the
+                        // best proxy for "the plate currently printing".
+                        const FileInfo* best = nullptr;
+                        for (const auto& file : files) {
+                            if (!helix::gcode::is_native_3mf_shadow(file.path) &&
+                                !helix::gcode::is_qidi_3mf_extract(file.path, filename)) {
+                                continue;
+                            }
+                            if (best == nullptr || file.modified > best->modified) {
+                                best = &file;
+                            }
+                        }
 
-                                if (best != nullptr) {
-                                    spdlog::debug(
-                                        "[{}] Selected QIDI native 3MF shadow G-code (newest of "
-                                        "matches): .temp/{} ({} bytes, modified {})",
-                                        get_name(), best->path, best->size, best->modified);
+                        if (best != nullptr) {
+                            spdlog::debug("[{}] Selected QIDI native 3MF G-code (newest of "
+                                          "matches): .temp/{} ({} bytes, modified {})",
+                                          get_name(), best->path, best->size, best->modified);
 
-                                    stream_if_safe(".temp", best->path, best->size);
+                            stream_if_safe(".temp", best->path, best->size);
+                            return;
+                        }
+
+                        spdlog::info("[{}] No extracted G-code for '{}' in .temp - keeping the "
+                                     "thumbnail",
+                                     get_name(), filename);
+                        keep_thumbnail();
+                    });
+            },
+            [this, token, filename, for_current_print, keep_thumbnail](const MoonrakerError& err) {
+                token.defer("PrintStatusPanel::qidi_3mf_shadow_list_err",
+                            [this, filename, err, for_current_print, keep_thumbnail]() {
+                                if (!for_current_print()) {
                                     return;
                                 }
-
-                                spdlog::debug("[{}] No QIDI native 3MF shadow G-code found; "
-                                              "falling back to active filename",
-                                              get_name());
-                                use_existing_download_path();
-                            });
-            },
-            [this, token, use_existing_download_path](const MoonrakerError& err) {
-                token.defer("PrintStatusPanel::qidi_3mf_shadow_list_err",
-                            [this, err, use_existing_download_path]() {
-                                spdlog::debug(
-                                    "[{}] Failed to list .temp for QIDI native 3MF preview: {}; "
-                                    "falling back to active filename",
-                                    get_name(), err.message);
-                                use_existing_download_path();
+                                spdlog::info(
+                                    "[{}] Cannot list .temp for '{}': {} - keeping the thumbnail",
+                                    get_name(), filename, err.message);
+                                keep_thumbnail();
                             });
             });
         return;

@@ -859,17 +859,18 @@ PrinterDetectionResult PrinterDetector::detect(const PrinterHardwareData& hardwa
             PrinterDetectionResult result = execute_printer_heuristics(printer, hardware);
 
             if (result.confidence > 0) {
-                spdlog::info("[PrinterDetector] Candidate: '{}' scored {}% ({} matches, best={}%) "
-                             "via: {}",
-                             result.type_name, result.confidence, result.match_count,
-                             result.best_single_confidence, result.reason);
+                spdlog::debug("[PrinterDetector] Candidate: '{}' scored {}% ({} matches, best={}%) "
+                              "via: {}",
+                              result.type_name, result.confidence, result.match_count,
+                              result.best_single_confidence, result.reason);
             }
 
             // Non-printer addons (show_in_list: false) can't win detection
             // They're scored and logged for diagnostics, but excluded from the winner
             if (!printer.value("show_in_list", true)) {
                 if (result.confidence > 0) {
-                    spdlog::info("[PrinterDetector]   [excluded from winner - not a real printer]");
+                    spdlog::debug(
+                        "[PrinterDetector]   [excluded from winner - not a real printer]");
                 }
                 continue;
             }
@@ -1205,15 +1206,23 @@ std::string PrinterDetector::apply_preset_with_variants(helix::Config* config,
     bool preset_is_forgex =
         preset.size() >= FORGE_X_LEN &&
         preset.compare(preset.size() - FORGE_X_LEN, FORGE_X_LEN, FORGE_X_SUFFIX) == 0;
-    bool is_zmod = !preset_is_forgex && std::find(objects.begin(), objects.end(),
-                                                  "fan_generic fanM106") != objects.end();
+    auto has_object = [&objects](const char* name) {
+        return std::find(objects.begin(), objects.end(), name) != objects.end();
+    };
+    // Stock Creator 5 / 5 Pro firmware names its part fan fanM106 too, so on
+    // those presets only Z-Mod's own `zmod` object identifies it.
+    bool preset_is_creator5 = preset.rfind("creator5", 0) == 0;
+    const char* zmod_signal = has_object("zmod") ? "zmod"
+                              : (!preset_is_creator5 && has_object("fan_generic fanM106"))
+                                  ? "fan_generic fanM106"
+                                  : nullptr;
+    bool is_zmod = !preset_is_forgex && zmod_signal != nullptr;
 
     std::string applied = preset;
     if (is_zmod) {
         std::string zmod_preset = preset + "_zmod";
-        spdlog::info("[PrinterDetector] ZMOD firmware detected (fan_generic fanM106), "
-                     "trying preset '{}'",
-                     zmod_preset);
+        spdlog::info("[PrinterDetector] ZMOD firmware detected ({}), trying preset '{}'",
+                     zmod_signal, zmod_preset);
         if (config->apply_preset_file(zmod_preset)) {
             applied = zmod_preset;
         } else {

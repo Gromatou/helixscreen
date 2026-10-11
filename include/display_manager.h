@@ -7,8 +7,10 @@
 #include "color_transform.h"
 #include "display_backend.h"
 #include "remote_screen_manager.h"
+#include "scroll_click_guard.h"
 #include "touch_calibration.h"
 #include "touch_calibration_session.h"
+#include "touch_calibration_wrapper.h"
 
 #include <functional>
 #include <lvgl.h>
@@ -172,48 +174,34 @@ class DisplayManager : public helix::ICalibrationSink {
 
     /**
      * @brief Decide whether real panel power-off (FB_BLANK_POWERDOWN / DRM DPMS)
-     *        is the sleep mechanism (#1049, #1594). Pure, no side effects.
+     *        is the sleep mechanism (#1049). Pure, no side effects.
      *
-     * Power-off and the backlight write stack rather than competing: enter_sleep()
-     * writes brightness 0 whichever mechanism it picks. A controllable backlight
-     * is therefore not a reason to skip cutting the panel — some controllers treat
-     * duty zero as "dim" and keep the LEDs powered, so the write alone leaves the
-     * panel lit.
+     * Power-off is a last resort, only for panels with no controllable backlight
+     * (generic HDMI, Backlight-None, CB1), where it is the only way to actually
+     * cut the panel. A device with a hardware blank or a usable backlight turns
+     * the backlight off instead. Powering down a panel whose driver does not
+     * expect it can wedge the display engine or leave the panel lit showing a
+     * no-signal pattern:
+     *   - Snapmaker U1: DPMS-off disables the Rockchip VOP2 CRTC and DPMS-on does
+     *     not reliably re-enable it, so the panel stays black until reboot.
+     *   - AD5X: unblanking leaves the display engine cycling solid fill colours.
+     *   - Creality K1 / K2: the panel edges glow and flicker white (#1708).
+     *   - Raspberry Pi DSI panels: the DSI stream stops and the panel cycles
+     *     through its colour test pattern.
      *
-     * A hardware blank still wins, because those backends cut the panel themselves.
-     *
-     * Two platforms are excluded at build time, because their panel does not
-     * come back from a power-down:
-     *   - Snapmaker U1: DPMS-off disables the Rockchip VOP2 CRTC and wake's
-     *     DPMS-on does not reliably re-enable it, so the panel stays black until
-     *     reboot (assets/config/platform/hooks-snapmaker-u1.sh "DRM CRTC keepalive").
-     *   - AD5X: unblanking leaves the display engine cycling solid fill colours
-     *     until the UI process restarts. Its sysfs backlight also reads
-     *     brightness=1 while the LEDs are physically dark, so the panel's real
-     *     state cannot be probed from userspace.
-     * The guard is a build-time check rather than a runtime probe because
-     * DisplayBackendFbdev::supports_power_off() answers yes for any writable
-     * /dev/fb0 without asking the panel anything, and a misfiring probe on these
-     * devices leaves the user with a screen they cannot recover.
-     *
-     * Callers may override the outcome entirely via /display/panel_power_off.
+     * A panel whose backlight write leaves the LEDs lit opts in through the
+     * /display/panel_power_off config override (#1594), which callers apply
+     * instead of this decision.
      *
      * @param use_hardware_blank         Whether a hardware backlight blank is used
+     * @param has_usable_backlight       Whether a controllable backlight is available
      * @param backend_supports_power_off Whether the display backend can power off
-     * @return true when the backend can power off and no hardware blank applies
+     * @return true only when there is neither a hardware blank nor a usable
+     *         backlight AND the backend can power off
      */
-    static bool should_use_power_off(bool use_hardware_blank, bool backend_supports_power_off) {
-        if (!backend_supports_power_off) {
-            return false;
-        }
-        if (use_hardware_blank) {
-            return false;
-        }
-#if defined(HELIX_PLATFORM_SNAPMAKER_U1) || defined(HELIX_PLATFORM_AD5X)
-        return false;
-#else
-        return true;
-#endif
+    static bool should_use_power_off(bool use_hardware_blank, bool has_usable_backlight,
+                                     bool backend_supports_power_off) {
+        return !use_hardware_blank && !has_usable_backlight && backend_supports_power_off;
     }
 
     /**
@@ -335,10 +323,11 @@ class DisplayManager : public helix::ICalibrationSink {
     void wake_display();
 
     /**
-     * @brief Force display ON at startup
+     * @brief Force display ON at startup, at the saved brightness
      *
-     * Called early in app initialization to ensure display is visible regardless
-     * of previous app's sleep state.
+     * Clears any sleep or dim state a previous instance left behind and applies
+     * DisplaySettingsManager's brightness, so it must run after that manager's
+     * subjects exist (after Application::init_panel_subjects()).
      */
     void ensure_display_on();
 
@@ -558,9 +547,12 @@ class DisplayManager : public helix::ICalibrationSink {
      * The debug-touches ripple is suppressed while this is true: the calibration
      * draws its own ripple, and during point capture affine is disabled so the
      * global debug ripple would render raw (Y-inverted) coordinates (#943).
+     * Also holds the evdev range still for the capture
+     * (helix::set_touch_capture_active).
      */
     void set_touch_calibration_active(bool active) {
         m_touch_calibration_active = active;
+        helix::set_touch_capture_active(active);
     }
     bool is_touch_calibration_active() const {
         return m_touch_calibration_active;
@@ -704,6 +696,11 @@ class DisplayManager : public helix::ICalibrationSink {
     // Tick at which preview was started; used to gate activity-based dismiss
     // so the click that *launched* the preview doesn't immediately close it.
     uint32_t m_preview_start_tick_ms = 0;
+    // True while a lifecycle suspend DisplayManager itself requested (idle dim
+    // or screensaver preview) is still outstanding. NavigationManager's suspend
+    // has a second owner — Application's background/foreground pair — so a wake
+    // must only resume a suspend this manager took.
+    bool m_lifecycle_suspended = false;
 #endif
     bool m_wake_requested = false; // Set by input wrapper when touch detected while sleeping
     int m_dim_timeout_sec = 600;
@@ -749,6 +746,9 @@ class DisplayManager : public helix::ICalibrationSink {
 
     // Original pointer read callback (before sleep-aware wrapper)
     lv_indev_read_cb_t m_original_pointer_read_cb = nullptr;
+
+    // Runs inside sleep_aware_read_cb, so only where that wrapper is installed
+    helix::ScrollClickGuard m_scroll_guard;
 
     // Last scroll config applied to the pointer, remembered so a post-swap input
     // rebuild (rotation fallback) can reapply it. Defaults match the clamped
@@ -824,6 +824,15 @@ class DisplayManager : public helix::ICalibrationSink {
      * @brief Configure scroll behavior on pointer device
      */
     void configure_scroll(int scroll_throw, int scroll_limit);
+
+    /// Applies scroll, long-press, the sleep-aware wrapper and the scroll guard to
+    /// a freshly created m_pointer. init() and rebuild_input_after_backend_swap()
+    /// both call it, so the two paths set the pointer up identically.
+    void configure_pointer(int scroll_throw, int scroll_limit);
+
+    /// The single assignment behind instance(): init() publishes this manager
+    /// through it, shutdown() clears it.
+    static void set_active_instance(DisplayManager* dm);
 
     /**
      * @brief Recreate input devices on the current backend after a backend swap

@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -85,7 +86,9 @@ class Config {
   private:
     static Config* instance;
     std::string path;
-    std::string active_printer_id_;          ///< Currently active printer slug ID
+    std::string active_printer_id_; ///< Currently active printer slug ID
+    /// Told each printer remove_printer() takes out of the list; see set_printer_removed_hook().
+    std::function<void(const std::string&)> printer_removed_hook_;
     bool read_only_mode_ = false;            ///< Config directory is on a read-only filesystem
     std::unique_ptr<ConfigStorage> storage_; ///< Document-level persistence backend
     /// True when storage_ was auto-created from `path` rather than injected by
@@ -492,6 +495,14 @@ class Config {
      */
     std::string get_active_printer_id() const;
 
+    /// What to call printer @p printer_id: its name, else its detected type, else its host
+    /// (a printer added by address has neither until it connects), else @p fallback.
+    std::string get_printer_display_name(const std::string& printer_id,
+                                         const std::string& fallback) const;
+
+    /// The active printer's display name; its id only when it has none.
+    std::string get_active_printer_name() const;
+
     /**
      * @brief Switch to a different printer configuration
      *
@@ -526,6 +537,14 @@ class Config {
      * @param printer_id Slug ID of the printer to remove
      */
     void remove_printer(const std::string& printer_id);
+
+    /// Called with the id of each printer remove_printer() (or archive_printer()) takes out
+    /// of the list, so state kept per printer outside settings.json goes with it: ids are
+    /// reused (a new printer takes the first free "printer-N"), and a new printer must not
+    /// inherit a removed one's.
+    void set_printer_removed_hook(std::function<void(const std::string&)> hook) {
+        printer_removed_hook_ = std::move(hook);
+    }
 
     /**
      * @brief Move a printer configuration out of the active list, preserving it

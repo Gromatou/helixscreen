@@ -54,6 +54,8 @@ inline constexpr int CONTRIBUTOR_COUNT = sizeof(CONTRIBUTORS) / sizeof(CONTRIBUT
 #include <spdlog/spdlog.h>
 
 #ifdef __ANDROID__
+#include "system/android_update_source.h"
+
 #include <SDL.h>
 #endif
 #include <memory>
@@ -308,7 +310,7 @@ void AboutSettingsOverlay::populate_info_rows() {
     Config* config = Config::get_instance();
     if (config) {
         std::string printer_name =
-            config->get<std::string>(config->df() + helix::wizard::PRINTER_NAME, "Unknown");
+            config->get_printer_display_name(config->get_active_printer_id(), "Unknown");
         lv_subject_copy_string(&printer_value_subject_, printer_name.c_str());
         spdlog::trace("[{}] Printer: {}", get_name(), printer_name);
     }
@@ -352,15 +354,26 @@ void AboutSettingsOverlay::fetch_print_hours() {
 
 void AboutSettingsOverlay::show_update_download_modal(bool start_immediately) {
 #ifdef __ANDROID__
-    // On Android, we never download/install tarballs — Play Store is the update
-    // channel. Route all install intents (About panel button and the in-app
-    // "New Version Available" notification) to the store listing.
+    // Android never runs the tarball updater. Every install intent (the About
+    // panel button and the "New Version Available" notification) opens wherever
+    // this APK came from: the Play listing for a Play install, the GitHub release
+    // for a sideload.
     if (helix::is_android_platform()) {
-        spdlog::info("[AboutSettings] Opening Play Store for update");
-        int result = SDL_OpenURL("market://details?id=org.helixscreen.app");
-        if (result != 0) {
-            spdlog::warn("[AboutSettings] market:// failed, trying web URL: {}", SDL_GetError());
-            SDL_OpenURL("https://play.google.com/store/apps/details?id=org.helixscreen.app");
+        const std::string installer = helix::android::installer_package();
+        auto& checker = UpdateChecker::instance();
+        helix::android::OfferedRelease offered;
+        if (auto info = checker.get_cached_update()) {
+            offered.tag_name = info->tag_name;
+            offered.version = info->version;
+        }
+        offered.on_github = checker.get_channel() != UpdateChecker::UpdateChannel::Dev;
+        const std::string url = helix::android::update_url(installer, offered);
+        spdlog::info("[AboutSettings] Installer '{}', opening {}", installer, url);
+        if (SDL_OpenURL(url.c_str()) != 0) {
+            spdlog::warn("[AboutSettings] Opening {} failed: {}", url, SDL_GetError());
+            if (url == helix::android::kPlayStoreMarketUrl) {
+                SDL_OpenURL(helix::android::kPlayStoreWebUrl);
+            }
         }
         (void)start_immediately;
         return;
@@ -486,9 +499,8 @@ void AboutSettingsOverlay::on_about_version_clicked(lv_event_t*) {
             // The two Update Channel rows swap on that subject, and toggling
             // beta also moves the effective channel whenever Dev is stored, so
             // the row arriving on screen needs its selection re-seeded.
-            sync_update_channel_rows(
-                get_about_settings_overlay().get_root(),
-                static_cast<int>(UpdateChecker::instance().get_channel()));
+            sync_update_channel_rows(get_about_settings_overlay().get_root(),
+                                     static_cast<int>(UpdateChecker::instance().get_channel()));
 
             ToastManager::instance().show(
                 ToastSeverity::SUCCESS,

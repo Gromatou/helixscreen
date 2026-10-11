@@ -578,12 +578,8 @@ kill_process_by_name() {
 #
 # Reads: KLIPPER_HOME, SUDO, HELIX_STATE_VAR_LIB, HELIX_STATE_ROOT_HOME
 retire_legacy_config_backups() {
-    local state_var_lib="${HELIX_STATE_VAR_LIB:-/var/lib/helixscreen}"
-    local state_root_home="${HELIX_STATE_ROOT_HOME:-/root/.helixscreen}"
-
     local tier
-    for tier in "$state_var_lib" "$state_root_home" "${KLIPPER_HOME:+${KLIPPER_HOME}/.helixscreen}"; do
-        [ -n "$tier" ] || continue
+    config_backup_tiers | while IFS= read -r tier; do
         [ -f "${tier}/helixconfig.json.backup" ] || continue
         # The gate: no current backup means the legacy file is still load-bearing.
         [ -f "${tier}/settings.json.backup" ] || continue
@@ -592,6 +588,24 @@ retire_legacy_config_backups() {
             log_info "Removed superseded config backup: ${tier}/helixconfig.json.backup"
         fi
     done
+}
+
+# The directories Config::init searches for a rolling settings backup, one per
+# line: the StateDirectory, then each HOME/.helixscreen the service may run with
+# (config_backup_primary/fallback, include/app_constants.h).
+# Reads: KLIPPER_HOME, HELIX_STATE_VAR_LIB, HELIX_STATE_ROOT_HOME
+config_backup_tiers() {
+    echo "${HELIX_STATE_VAR_LIB:-/var/lib/helixscreen}"
+    echo "${HELIX_STATE_ROOT_HOME:-/root/.helixscreen}"
+    [ -n "${KLIPPER_HOME:-}" ] && echo "${KLIPPER_HOME}/.helixscreen"
+    return 0
+}
+
+# The rolling settings backup file names Config::init restores from, in its
+# priority order (config_backup_search_paths, src/system/config.cpp).
+config_backup_names() {
+    echo "settings.json.backup"
+    echo "helixconfig.json.backup"
 }
 
 clean_helix_state_dirs() {
@@ -1606,7 +1620,7 @@ set_install_paths() {
 # These are the files users may want to edit from Fluidd/Mainsail, and that
 # the app writes to at runtime. All other files in INSTALL_DIR/config/ are
 # static assets reinstalled on each update.
-HELIX_USER_CONFIG_FILES="settings.json helixscreen.env .disabled_services tool_spools.json crash_history.json"
+HELIX_USER_CONFIG_FILES="settings.json helixscreen.env .disabled_services tool_spools.json crash_history.json user_filaments.json"
 
 # User-writable config DIRECTORIES that live in printer_data/config/helixscreen/.
 #
@@ -1637,6 +1651,7 @@ HELIX_USER_CONFIG_DIRS="custom_images themes printer_database.d"
 _helix_config_file_seed() {
     case "$1" in
         crash_history.json) printf '[]\n' ;;   # CrashHistory::load() expects a JSON array
+        user_filaments.json) printf '[]\n' ;;  # FilamentCatalog reads a bare array as no products
         *) return 1 ;;
     esac
 }
@@ -3464,7 +3479,7 @@ _host_ships_a_stock_ui() {
 # Stop the QIDI stock screen in the two shapes COMPETING_UIS cannot name.
 # Sets found_any in the caller's scope, like the sibling handlers.
 stop_qidi_competing_uis() {
-    local bin unit unit_path
+    local bin unit unit_path stopped=false
 
     for bin in $QIDI_STOCK_UI_BINS; do
         [ -f "$bin" ] || continue
@@ -3475,6 +3490,7 @@ stop_qidi_competing_uis() {
         $SUDO chmod a-x "$bin" 2>/dev/null || true
         record_disabled_service "sysv-chmod" "$bin"
         found_any=true
+        stopped=true
     done
 
     for unit_path in /etc/systemd/system/*.service /lib/systemd/system/*.service; do
@@ -3490,7 +3506,37 @@ stop_qidi_competing_uis() {
         $SUDO systemctl disable "$unit" 2>/dev/null || true
         record_disabled_service "systemd" "$unit"
         found_any=true
+        stopped=true
     done
+
+    # The stock client also supplies the MQTT link credentials and the QIDI Box
+    # filament state, so replacing it costs more than the screen.
+    if [ "$stopped" = true ]; then
+        log_warn "QIDI Studio box sync, QIDI cloud and QIDI Box filament edits depend on the stock QIDI client"
+        log_warn "and will not work while HelixScreen replaces it. Uninstalling HelixScreen restores them."
+    fi
+}
+
+# QIDI .3mf thumbnails (prestonbrown/helixscreen#1713): QIDI's customized
+# Moonraker hardcodes every uploaded .3mf's thumbnail metadata at
+# .thumbs/<subdir>/<stem>/plate_N.png and extracts no image itself; the stock
+# screen client this installer stops is what wrote those files. The units,
+# their gate and their refresh live in the shipped
+# $INSTALL_DIR/config/qidi-3mf-thumbs-units.sh so the install path and the
+# post-update refresh path (which has no sudo under NoNewPrivileges) run the
+# same code. This step just invokes the installed copy with the resolved
+# Klipper identity; it exits 0 with a logged reason wherever the capability
+# gate does not hold. Runs post-extract, since the payload carries it.
+install_qidi_3mf_thumbs() {
+    local units_sh="${INSTALL_DIR}/config/qidi-3mf-thumbs-units.sh"
+
+    if [ ! -f "$units_sh" ]; then
+        log_warn "QIDI thumbnail units script missing under ${INSTALL_DIR}/config -- skipping"
+        return 0
+    fi
+    HELIX_QIDI_HOME="${HELIX_QIDI_HOME:-${KLIPPER_HOME:-}}" \
+        $SUDO "$units_sh" "${KLIPPER_USER:-}" "${KLIPPER_GROUP:-}" || true
+    return 0
 }
 
 # Ensure SSH (dropbear) is running and will start on boot.
@@ -3922,28 +3968,12 @@ seed_settings_for_printer() {
         return 0
     fi
 
-    local settings="${INSTALL_DIR}/config/settings.json"
-
-    if [ -n "${INSTALL_DIR:-}" ] && [ ! -d "${INSTALL_DIR}/config" ]; then
-        $(file_sudo "${INSTALL_DIR}") mkdir -p "${INSTALL_DIR}/config"
-    fi
-
-    log_info "Seeding settings defaults for ${printer_id}..."
-
-    # Merge into a temp file we own, then move into place via file_sudo so we
-    # respect the same privilege model as the rest of the installer.
-    local tmp_out="${settings}.seed.$$"
-
-    # Extract the install-critical device-level blocks from the preset, strip
-    # any "_"-prefixed provenance keys, then deep-merge that subset into the base
-    # settings: existing settings (base) take precedence; the subset fills only
-    # keys the base does not already define. Recurses into nested objects.
-    if SETTINGS_PATH="$settings" FRAGMENT_PATH="$fragment" TMP_OUT="$tmp_out" python3 - <<'PY'
-import json, os, sys
-
-settings_path = os.environ["SETTINGS_PATH"]
-fragment_path = os.environ["FRAGMENT_PATH"]
-tmp_out = os.environ["TMP_OUT"]
+    # Extract the install-critical device-level blocks from the preset and
+    # strip any "_"-prefixed provenance keys; merge_settings_defaults then fills
+    # only keys the existing settings do not already define.
+    local subset
+    subset=$(FRAGMENT_PATH="$fragment" python3 - <<'PY'
+import json, os
 
 # The ONLY preset blocks baked into the user's settings.json BEFORE first launch.
 # These are the install-critical, pre-Moonraker device-level blocks:
@@ -3959,21 +3989,6 @@ tmp_out = os.environ["TMP_OUT"]
 # reads it before its runtime preset loader runs.
 SEED_BLOCKS = ["input", "display"]
 
-def load(path):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path) as f:
-            data = f.read().strip()
-        if not data:
-            return {}
-        obj = json.loads(data)
-        return obj if isinstance(obj, dict) else {}
-    except (ValueError, OSError):
-        # Malformed existing settings: treat as empty base rather than crash
-        # the install. The seeded subset becomes the new content.
-        return {}
-
 def strip_underscore(obj):
     """Recursively drop any "_"-prefixed keys (provenance/metadata) so the
     preset's nested documentation (e.g. input.calibration._comment) never leaks
@@ -3985,22 +4000,100 @@ def strip_underscore(obj):
         return [strip_underscore(v) for v in obj]
     return obj
 
-def extract_subset(preset, blocks):
-    """Build a fragment dict containing only the named top-level blocks present
-    in the preset, with provenance keys stripped. A block absent from the preset
-    is simply omitted from the fragment."""
-    out = {}
-    for key in blocks:
-        if isinstance(preset, dict) and isinstance(preset.get(key), dict):
-            out[key] = strip_underscore(preset[key])
-    return out
+try:
+    with open(os.environ["FRAGMENT_PATH"]) as f:
+        preset = json.load(f)
+except (ValueError, OSError):
+    preset = {}
+out = {}
+for key in SEED_BLOCKS:
+    if isinstance(preset, dict) and isinstance(preset.get(key), dict):
+        out[key] = strip_underscore(preset[key])
+print(json.dumps(out))
+PY
+    ) || subset=""
+    if [ -z "$subset" ]; then
+        log_warn "Failed to merge settings seed for ${printer_id}; leaving settings.json unchanged"
+        return 0
+    fi
+
+    log_info "Seeding settings defaults for ${printer_id}..."
+    if merge_settings_defaults "$subset"; then
+        _record_seeded_settings "$printer_id"
+        log_success "Seeded settings defaults for ${printer_id}"
+    else
+        log_warn "Could not write seeded settings.json for ${printer_id}"
+    fi
+
+    return 0
+}
+
+# Rewrite the install's settings.json through a Python transform. Every
+# installer write to settings.json goes through here, so one place owns:
+#   - an unparseable (or non-object) file is left alone for Config::init,
+#     which keeps it as .corrupt and recovers from the rolling backup; an
+#     absent or empty one starts from {}.
+#   - the write renames a synced temp file into place, as ConfigStorageFile::store
+#     does, so power loss leaves the old file or the new one, never a truncated
+#     one. The new file takes the old one's mode and, where permitted, owner.
+#   - through a settings.json symlink into printer_data, the temp file and the
+#     rename target are the link's resolved file: the rename stays inside one
+#     directory and the link survives. These writers run after
+#     setup_config_symlink, so the link is the usual case on a Pi.
+# Args: $1 = Python source defining transform(settings) -> settings. It runs with
+#       json, os and deep_merge in scope and reads its inputs from os.environ.
+#       $2 = the file to rewrite (default: the install's settings.json)
+#       $3... = NAME=value inputs for the transform's environment. A prefix
+#       assignment on the call (NAME=value _rewrite_settings_json) does not
+#       reach python3: some BusyBox ash builds (1.30 among them) keep it out of
+#       the function's children.
+# Returns 1 when python3 is missing, settings.json is unparseable, or the
+# transform or write failed.
+_rewrite_settings_json() {
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    local settings="${2:-${INSTALL_DIR}/config/settings.json}"
+    if [ -z "${2:-}" ] && [ -n "${INSTALL_DIR:-}" ] && [ ! -d "${INSTALL_DIR}/config" ]; then
+        $(file_sudo "${INSTALL_DIR}") mkdir -p "${INSTALL_DIR}/config"
+    fi
+
+    if [ -L "$settings" ]; then
+        settings=$(readlink -f "$settings" 2>/dev/null) || settings=""
+        [ -n "$settings" ] || return 1
+    fi
+    local target_dir
+    target_dir=$(dirname "$settings")
+    local tmp_out="${target_dir}/.settings.json.seed.$$"
+    local transform="$1"
+    shift
+    if [ $# -gt 0 ]; then shift; fi
+
+    if ! env SETTINGS_PATH="$settings" SETTINGS_TRANSFORM="$transform" TMP_OUT="$tmp_out" "$@" python3 - <<'PY'
+import json, os, sys
+
+settings_path = os.environ["SETTINGS_PATH"]
+
+def load(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            data = f.read().strip()
+        if not data:
+            return {}
+        obj = json.loads(data)
+    except (ValueError, OSError):
+        sys.exit(3)
+    if not isinstance(obj, dict):
+        sys.exit(3)
+    return obj
 
 def deep_merge(base, frag, top_level=False):
     """Return base with frag's keys filled in where base lacks them.
     Existing base values always win (fragment is lower priority)."""
     for k, v in frag.items():
-        # Defense-in-depth: never copy a top-level "_"-prefixed provenance key
-        # into the user's settings.json (the subset is already stripped above).
+        # Never copy a top-level "_"-prefixed provenance key into the user's
+        # settings.json.
         if top_level and k.startswith("_"):
             continue
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):
@@ -4010,30 +4103,74 @@ def deep_merge(base, frag, top_level=False):
         # else: base already has a non-dict value → keep it (user wins)
     return base
 
-base = load(settings_path)
-preset = load(fragment_path)
-frag = extract_subset(preset, SEED_BLOCKS)
-merged = deep_merge(base, frag, top_level=True)
+scope = {"json": json, "os": os, "deep_merge": deep_merge}
+exec(os.environ["SETTINGS_TRANSFORM"], scope)
+result = scope["transform"](load(settings_path))
 
-with open(tmp_out, "w") as f:
-    json.dump(merged, f, indent=2)
+with open(os.environ["TMP_OUT"], "w") as f:
+    json.dump(result, f, indent=2)
     f.write("\n")
+    f.flush()
+    if os.path.exists(settings_path):
+        st = os.stat(settings_path)
+        os.fchmod(f.fileno(), st.st_mode & 0o7777)
+        try:
+            os.fchown(f.fileno(), st.st_uid, st.st_gid)
+        except PermissionError:
+            pass
+    os.fsync(f.fileno())
 PY
     then
-        if [ -f "$tmp_out" ]; then
-            if $(file_sudo "${INSTALL_DIR}/config") mv "$tmp_out" "$settings" 2>/dev/null; then
-                _record_seeded_settings "$printer_id"
-                log_success "Seeded settings defaults for ${printer_id}"
-            else
-                log_warn "Could not write seeded settings.json for ${printer_id}"
-                rm -f "$tmp_out" 2>/dev/null || true
-            fi
-        fi
-    else
-        log_warn "Failed to merge settings seed for ${printer_id}; leaving settings.json unchanged"
         rm -f "$tmp_out" 2>/dev/null || true
+        return 1
     fi
 
+    if ! $(file_sudo "$target_dir") mv "$tmp_out" "$settings" 2>/dev/null; then
+        rm -f "$tmp_out" 2>/dev/null || true
+        return 1
+    fi
+    # The rename is durable once the directory entry is.
+    python3 -c 'import os, sys; fd = os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd)' \
+        "$target_dir" 2>/dev/null || true
+    return 0
+}
+
+# Deep-merge a JSON object into the install's settings.json, filling only keys
+# it lacks: a value already there always wins. Creates settings.json when it is
+# absent or empty.
+# Args: $1 = JSON object text, $2 = another file to merge into instead
+# Returns 1 as _rewrite_settings_json does.
+merge_settings_defaults() {
+    _rewrite_settings_json '
+def transform(settings):
+    return deep_merge(settings, json.loads(os.environ["FRAGMENT_JSON"]), top_level=True)
+' "${2:-}" FRAGMENT_JSON="$1"
+}
+
+# Persist a channel match_channel_to_version derived from a prerelease version
+# as the app's /update/channel, or its updater offers stable while Moonraker's
+# update_manager follows beta. A channel already in settings.json is the user's
+# and stays. Runs after setup_config_symlink so the write reaches printer_data.
+#
+# The rolling backups get the same default. A settings.json this creates has no
+# config_version, and Config::init replaces such a document wholesale with a
+# backup that survived an uninstall, which would take the channel with it.
+seed_update_channel() {
+    [ "${_R2_CHANNEL_FROM_VERSION:-}" = "yes" ] || return 0
+    local fragment='{"update": {"channel": 1}}' tier name
+    if merge_settings_defaults "$fragment"; then
+        log_info "App update channel: beta, unless settings.json already named one"
+    else
+        log_warn "Could not record the beta update channel in settings.json;"
+        log_warn "choose Beta in the app's update settings to keep receiving beta builds."
+    fi
+    config_backup_tiers | while IFS= read -r tier; do
+        for name in $(config_backup_names); do
+            [ -s "${tier}/${name}" ] || continue
+            merge_settings_defaults "$fragment" "${tier}/${name}" ||
+                log_warn "Could not record the beta update channel in ${tier}/${name}"
+        done
+    done
     return 0
 }
 
@@ -4089,27 +4226,8 @@ seed_full_preset_for_printer() {
         log_warn "python3 not available; skipping full-preset seed for ${printer_id}"
         return 0
     fi
-    [ -d "${INSTALL_DIR}/config" ] || $(file_sudo "${INSTALL_DIR}") mkdir -p "${INSTALL_DIR}/config"
-    local settings="${INSTALL_DIR}/config/settings.json"
-    local tmp_out="${settings}.seed.$$"
     log_info "Seeding FULL preset for ${printer_id} (preset-mode)..."
-    if SETTINGS_PATH="$settings" FRAGMENT_PATH="$fragment" PRESET_ID="$printer_id" TMP_OUT="$tmp_out" python3 - <<'PY'
-import json, os
-
-settings_path = os.environ["SETTINGS_PATH"]
-fragment_path = os.environ["FRAGMENT_PATH"]
-preset_id     = os.environ["PRESET_ID"]
-tmp_out       = os.environ["TMP_OUT"]
-
-def load(p):
-    try:
-        with open(p) as f:
-            d = f.read().strip()
-        o = json.loads(d) if d else {}
-        return o if isinstance(o, dict) else {}
-    except (ValueError, OSError):
-        return {}
-
+    if _rewrite_settings_json '
 def strip_us(o):
     """Recursively drop _-prefixed provenance keys."""
     if isinstance(o, dict):
@@ -4118,54 +4236,44 @@ def strip_us(o):
         return [strip_us(v) for v in o]
     return o
 
-def merge(base, frag):
-    """Fill base with frag keys not already in base (base wins)."""
-    for k, v in frag.items():
-        if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-            merge(base[k], v)
-        elif k not in base:
-            base[k] = v
+def transform(base):
+    try:
+        with open(os.environ["FRAGMENT_PATH"]) as f:
+            preset = json.load(f)
+    except (ValueError, OSError):
+        preset = {}
+    preset = strip_us(preset) if isinstance(preset, dict) else {}
+    preset_id = os.environ["PRESET_ID"]
+
+    # Seed top-level display block (device-level, needed at first boot).
+    if isinstance(preset.get("display"), dict):
+        display = base.get("display")
+        base["display"] = deep_merge(display if isinstance(display, dict) else {},
+                                     preset["display"])
+
+    # Place preset["printer"] under printers.<active_id>.
+    active = base.get("active_printer_id", "default")
+    printers = base.setdefault("printers", {})
+    if not isinstance(printers.get(active), dict):
+        printers[active] = {}
+    pnode = printers[active]
+    if isinstance(preset.get("printer"), dict):
+        deep_merge(pnode, preset["printer"])
+
+    # Top-level structural markers for multi-printer settings shape.
+    # setdefault, never assign: this seeding runs on --update too, after the
+    # settings.json of the user has been restored. Overwriting wizard_completed
+    # would send a configured user back through first-boot setup, and on a
+    # multi-printer config the stale-entry recovery in the app would then drop
+    # the printer node entirely.
+    base["active_printer_id"] = active
+    pnode.setdefault("wizard_completed", False)
+    base.setdefault("preset", preset.get("preset", preset_id))
     return base
-
-base   = load(settings_path)
-preset = strip_us(load(fragment_path))
-
-# Seed top-level display block (device-level, needed at first boot).
-if isinstance(preset.get("display"), dict):
-    base["display"] = merge(base.get("display", {}), preset["display"])
-
-# Place preset["printer"] under printers.<active_id>.
-active   = base.get("active_printer_id", "default")
-printers = base.setdefault("printers", {})
-if not isinstance(printers.get(active), dict):
-    printers[active] = {}
-pnode = printers[active]
-if isinstance(preset.get("printer"), dict):
-    merge(pnode, preset["printer"])
-
-# Top-level structural markers for multi-printer settings shape.
-# setdefault, never assign: this seeding runs on --update too, after the user's
-# settings.json has been restored. Overwriting wizard_completed would send a
-# configured user back through first-boot setup, and on a multi-printer config
-# the app's stale-entry recovery would then drop the printer node entirely.
-base["active_printer_id"] = active
-pnode.setdefault("wizard_completed", False)
-base.setdefault("preset", preset.get("preset", preset_id))
-
-with open(tmp_out, "w") as f:
-    json.dump(base, f, indent=2)
-    f.write("\n")
-PY
-    then
-        if [ -f "$tmp_out" ] && $(file_sudo "${INSTALL_DIR}/config") mv "$tmp_out" "$settings" 2>/dev/null; then
-            log_success "Seeded FULL preset for ${printer_id}"
-        else
-            log_warn "Could not write full-preset settings.json for ${printer_id}"
-            rm -f "$tmp_out" 2>/dev/null || true
-        fi
+' "" FRAGMENT_PATH="$fragment" PRESET_ID="$printer_id"; then
+        log_success "Seeded FULL preset for ${printer_id}"
     else
-        log_warn "Failed to merge full preset for ${printer_id}; leaving settings.json unchanged"
-        rm -f "$tmp_out" 2>/dev/null || true
+        log_warn "Could not write full-preset settings.json for ${printer_id}; leaving it unchanged"
     fi
     return 0
 }
@@ -4174,34 +4282,16 @@ PY
 # so the app finds Moonraker without any wizard interaction.
 # Idempotent — does NOT overwrite an existing moonraker_host value.
 _seed_moonraker_host_localhost() {
-    command -v python3 >/dev/null 2>&1 || return 0
-    local settings="${INSTALL_DIR}/config/settings.json"
-    local tmp_out="${settings}.host.$$"
-    SETTINGS_PATH="$settings" TMP_OUT="$tmp_out" python3 - <<'PY' || return 0
-import json, os
-
-p = os.environ["SETTINGS_PATH"]
-t = os.environ["TMP_OUT"]
-try:
-    with open(p) as f:
-        d = json.load(f)
-    if not isinstance(d, dict):
-        d = {}
-except Exception:
-    d = {}
-
-a  = d.get("active_printer_id", "default")
-d["active_printer_id"] = a
-pr = d.setdefault("printers", {})
-if not isinstance(pr.get(a), dict):
-    pr[a] = {}
-pr[a].setdefault("moonraker_host", "127.0.0.1")
-
-with open(t, "w") as f:
-    json.dump(d, f, indent=2)
-    f.write("\n")
-PY
-    [ -f "$tmp_out" ] && $(file_sudo "${INSTALL_DIR}/config") mv "$tmp_out" "$settings" 2>/dev/null || rm -f "$tmp_out" 2>/dev/null
+    _rewrite_settings_json '
+def transform(d):
+    a = d.get("active_printer_id", "default")
+    d["active_printer_id"] = a
+    pr = d.setdefault("printers", {})
+    if not isinstance(pr.get(a), dict):
+        pr[a] = {}
+    pr[a].setdefault("moonraker_host", "127.0.0.1")
+    return d
+' || true
 }
 
 # Confidence thresholds for the B/C gate.
@@ -4434,6 +4524,9 @@ install_klipper_include_for_printer() {
 #
 # R2 CDN configuration (overridable via environment)
 : "${R2_BASE_URL:=https://releases.helixscreen.org}"
+# Whether R2_CHANNEL arrived from the environment (as opposed to the default
+# below). resolve_update_channel() must not override the operator's choice.
+_R2_CHANNEL_FROM_ENV="${R2_CHANNEL:+yes}"
 : "${R2_CHANNEL:=stable}"
 
 # Plain HTTP endpoint for systems without SSL (K1, AD5M BusyBox wget)
@@ -4753,6 +4846,109 @@ parse_manifest_version() {
     parse_json_string_field version
 }
 
+# Extract the value of a JSON integer field from stdin. Args: key
+#
+# Prints the number, or nothing when the key is absent or its value is not a
+# bare integer. Unquoted values ride in the same quote-split field as the colon
+# ("channel": 1, splits to `channel` + `: 1,`), so the digits are trimmed out
+# of that field rather than read from the next one. First match wins, and the
+# key/value pair always shares a line, so the line-wise walk of
+# parse_json_string_field is enough here too.
+parse_json_int_field() {
+    awk -v key="$1" '
+        {
+            n = split($0, p, "\"")
+            for (i = 1; i < n; i++) {
+                if (p[i] == key && p[i+1] ~ /^[ \t]*:[ \t]*-?[0-9]/) {
+                    v = p[i+1]
+                    sub(/^[^0-9-]*/, "", v)
+                    sub(/[^0-9].*$/, "", v)
+                    print v
+                    exit
+                }
+            }
+        }
+    '
+}
+
+# Newest release tag from GitHub's /releases payload on stdin, prereleases
+# included. GitHub lists the array newest-first and serializes every entry with
+# tag_name ahead of draft and prerelease, so one walk that carries the current
+# entry's tag and flags can take the first non-draft prerelease, falling back
+# to the first non-draft stable release (what /releases/latest answers) when
+# no prerelease exists. Whole-field comparison on quote-split input keeps a
+# "prerelease" mentioned inside release prose from counting, per
+# parse_json_string_field.
+parse_newest_release_tag() {
+    awk '
+        {
+            n = split($0, p, "\"")
+            for (i = 1; i < n; i++) {
+                if (p[i] == "tag_name" && p[i+1] ~ /^[ \t]*:[ \t]*$/) tag = p[i+2]
+                else if (p[i] == "draft") draft = (p[i+1] ~ /:[ \t]*true/)
+                else if (p[i] == "prerelease") {
+                    if (p[i+1] ~ /:[ \t]*true/) {
+                        if (!draft && tag != "") { print tag; done = 1; exit }
+                    } else if (!draft && tag != "" && stable == "") {
+                        stable = tag
+                    }
+                }
+            }
+        }
+        END { if (!done && stable != "") print stable }
+    '
+}
+
+# Set R2_CHANNEL from the installed app's settings, so an update follows the
+# channel the user picked in the UI instead of always pulling stable.
+#
+# The app persists its channel at /update/channel as an int (0=stable,
+# 1=beta, 2=dev). config/settings.json is a symlink into
+# printer_data/config/helixscreen/, so reading through it covers both the
+# symlink and a real file. An R2_CHANNEL from the environment wins; anything
+# unreadable, absent or out of range maps back to stable.
+resolve_update_channel() {
+    if [ "${_R2_CHANNEL_FROM_ENV:-}" = "yes" ]; then
+        log_info "Update channel: ${R2_CHANNEL} (R2_CHANNEL set in environment)"
+        return 0
+    fi
+
+    local settings num=""
+    settings="${INSTALL_DIR}/config/settings.json"
+
+    if [ -f "$settings" ]; then
+        num=$(parse_json_int_field channel < "$settings" 2>/dev/null) || num=""
+    fi
+
+    case "$num" in
+        1) R2_CHANNEL=beta ;;
+        2) R2_CHANNEL=dev ;;
+        *) R2_CHANNEL=stable ;;
+    esac
+    case "$num" in
+        0 | 1 | 2) _R2_CHANNEL_FROM_SETTINGS=yes ;;
+    esac
+    log_info "Update channel: ${R2_CHANNEL} (read from ${settings})"
+}
+
+# An explicit --version decides the channel when nothing else has: a
+# prerelease (any '-' suffix, the same test scripts/release-channel.sh applies
+# to tags) pinned on a fresh install or one with no settings.json is a beta
+# install, and the channel written into moonraker.conf must follow it.
+# _R2_CHANNEL_FROM_VERSION tells seed_update_channel to persist it for the app.
+# Args: the requested version tag
+match_channel_to_version() {
+    [ "${_R2_CHANNEL_FROM_ENV:-}" = "yes" ] && return 0
+    [ "${_R2_CHANNEL_FROM_SETTINGS:-}" = "yes" ] && return 0
+    case "$1" in
+        *-*)
+            R2_CHANNEL=beta
+            _R2_CHANNEL_FROM_VERSION=yes
+            log_info "Update channel: beta (${1} is a prerelease)"
+            ;;
+    esac
+}
+
 # Extract one string field from a platform's block of the manifest's assets
 # object on stdin. Args: platform key
 #
@@ -4877,19 +5073,47 @@ _verify_archive_hash() {
 # second (matching get_latest_version's own source order), so an HTTPS-capable
 # box gets an authenticated set of hashes even when it later has to fall back
 # to the HTTP mirror for the much larger archive.
-# Returns 0 when a manifest is in hand.
+#
+# Each channel's manifest describes only that channel's latest release, so
+# given a version the install channel's manifest does not cover, the other
+# channels' manifests are tried: a beta pinned with --version on a stable
+# install is listed in beta's.
+# Args: [version tag the manifest must cover]
+# Returns 0 when a manifest (covering that version, if given) is in hand.
 _ensure_manifest() {
-    [ -n "$_R2_MANIFEST" ] && return 0
+    local want=${1:-} ch
+    if [ -n "$_R2_MANIFEST" ]; then
+        if [ -z "$want" ] || _manifest_covers_version "$want"; then
+            return 0
+        fi
+    fi
 
+    if _fetch_channel_manifest "$R2_CHANNEL" &&
+        { [ -z "$want" ] || _manifest_covers_version "$want"; }; then
+        return 0
+    fi
+    [ -n "$want" ] || return 1
+    for ch in stable beta dev; do
+        [ "$ch" = "$R2_CHANNEL" ] && continue
+        if _fetch_channel_manifest "$ch" && _manifest_covers_version "$want"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Fetch one channel's manifest into _R2_MANIFEST / _R2_MANIFEST_TRANSPORT.
+# Args: channel
+_fetch_channel_manifest() {
     if check_https_capability; then
-        _R2_MANIFEST=$(fetch_url "${R2_BASE_URL}/${R2_CHANNEL}/manifest.json") || true
+        _R2_MANIFEST=$(fetch_url "${R2_BASE_URL}/${1}/manifest.json") || true
         if [ -n "$_R2_MANIFEST" ]; then
             _R2_MANIFEST_TRANSPORT="https"
             return 0
         fi
     fi
 
-    _R2_MANIFEST=$(fetch_url_http "${HTTP_BASE_URL}/${R2_CHANNEL}/manifest.json") || true
+    _R2_MANIFEST=$(fetch_url_http "${HTTP_BASE_URL}/${1}/manifest.json") || true
     if [ -n "$_R2_MANIFEST" ]; then
         _R2_MANIFEST_TRANSPORT="http"
         return 0
@@ -5116,11 +5340,19 @@ get_latest_version() {
             log_warn "CDN unavailable, trying GitHub..."
         fi
 
-        # Fallback: GitHub API
-        local url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-        log_info "Fetching latest version from GitHub..."
-
-        version=$(fetch_url "$url" | parse_json_string_field tag_name)
+        # Fallback: GitHub API. /releases/latest skips prereleases, so the
+        # beta and dev channels list /releases and take the newest non-draft
+        # release, prereleases included.
+        local url
+        if [ "$R2_CHANNEL" != "stable" ]; then
+            url="https://api.github.com/repos/${GITHUB_REPO}/releases"
+            log_info "Fetching newest ${R2_CHANNEL} version from GitHub..."
+            version=$(fetch_url "$url" | parse_newest_release_tag)
+        else
+            url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+            log_info "Fetching latest version from GitHub..."
+            version=$(fetch_url "$url" | parse_json_string_field tag_name)
+        fi
 
         if [ -n "$version" ]; then
             echo "$version"
@@ -5245,7 +5477,7 @@ download_release() {
     # invoked as `version=$(get_latest_version ...)`, so the _R2_MANIFEST it
     # caches lives and dies in that command substitution's subshell and never
     # reaches here — without this refetch every download is unverifiable.
-    _ensure_manifest || true
+    _ensure_manifest "$version" || true
 
     # The channel manifest only ever describes the LATEST release. Anything it
     # says (asset URLs *and* hashes) is off-limits when the caller pinned an
@@ -6435,6 +6667,18 @@ _sed_inplace() {
     $SUDO sed -i '' "$pattern" "$file" 2>/dev/null || true
 }
 
+# Fill the install-path placeholders (@@INSTALL_DIR@@, @@INSTALL_PARENT@@) in
+# installed unit files. config/refresh-service-units.sh does the same on the
+# device, where this library is not shipped.
+# Args: UNIT_FILE...   Reads: INSTALL_DIR, SUDO
+_template_install_paths() {
+    local install_dir="${INSTALL_DIR:-/opt/helixscreen}" install_parent f
+    install_parent="$(dirname "$install_dir")"
+    for f in "$@"; do
+        _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g; s|@@INSTALL_PARENT@@|${install_parent}|g" "$f"
+    done
+}
+
 # Returns true if this process is running under the NoNewPrivileges systemd constraint.
 # When helix-screen self-updates, it spawns install.sh as a child process.  The
 # helixscreen.service unit has NoNewPrivileges=true, so ALL sudo calls in install.sh
@@ -6815,15 +7059,10 @@ install_service_systemd() {
     # `mks` user has no `mks` group and systemd refuses to spawn the unit.
     local helix_user="${KLIPPER_USER:-root}"
     local helix_group="${KLIPPER_GROUP:-${KLIPPER_USER:-root}}"
-    local install_dir="${INSTALL_DIR:-/opt/helixscreen}"
-
-    local install_parent
-    install_parent="$(dirname "${install_dir}")"
 
     _sed_inplace "s|@@HELIX_USER@@|${helix_user}|g" "$service_dest"
     _sed_inplace "s|@@HELIX_GROUP@@|${helix_group}|g" "$service_dest"
-    _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$service_dest"
-    _sed_inplace "s|@@INSTALL_PARENT@@|${install_parent}|g" "$service_dest"
+    _template_install_paths "$service_dest"
 
     if ! $SUDO systemctl daemon-reload; then
         log_error "Failed to reload systemd daemon."
@@ -6839,10 +7078,10 @@ install_service_systemd() {
 
 # During self-update, check if the deployed update-watcher path unit has the
 # old PathExists directive (which causes infinite restart loops) and fix it.
-# The watcher units have no platform customizations — only @@INSTALL_DIR@@.
+# The watcher units have no platform customizations, only install-path placeholders.
 # Under NoNewPrivileges we can't write to /etc/systemd/system/ or run
 # systemctl daemon-reload, so we rely on helixscreen-update.service's
-# ExecStartPre to refresh the main service file on next Moonraker update.
+# ExecStart script to refresh the main service file on next Moonraker update.
 # However, the PATH unit itself won't get refreshed that way, so we attempt
 # a direct fix here and fall back to a warning if permissions block it.
 update_watcher_if_stale() {
@@ -6874,8 +7113,6 @@ update_watcher_if_stale() {
     local path_src="${INSTALL_DIR}/config/helixscreen-update.path"
     local svc_src="${INSTALL_DIR}/config/helixscreen-update.service"
     local install_dir="${INSTALL_DIR:-/opt/helixscreen}"
-    local install_parent
-    install_parent="$(dirname "$install_dir")"
 
     if _has_no_new_privs; then
         # Can't write to /etc/systemd/system/ under NoNewPrivileges.
@@ -6886,9 +7123,8 @@ update_watcher_if_stale() {
         fi
         if [ -f "$svc_src" ] && [ -f "$svc_dest" ]; then
             if cp "$svc_src" "$svc_dest" 2>/dev/null; then
-                sed -i -e "s|@@INSTALL_DIR@@|${install_dir}|g" \
-                       -e "s|@@INSTALL_PARENT@@|${install_parent}|g" \
-                    "$svc_dest" 2>/dev/null
+                # sudo is blocked under NoNewPrivileges, so write directly.
+                ( SUDO=""; _template_install_paths "$svc_dest" )
                 fixed=true
             fi
         fi
@@ -6905,10 +7141,7 @@ update_watcher_if_stale() {
     if [ -f "$path_src" ] && [ -f "$svc_src" ]; then
         $SUDO cp "$path_src" "$path_dest"
         $SUDO cp "$svc_src" "$svc_dest"
-        _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$path_dest"
-        _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$svc_dest"
-        _sed_inplace "s|@@INSTALL_PARENT@@|${install_parent}|g" "$path_dest"
-        _sed_inplace "s|@@INSTALL_PARENT@@|${install_parent}|g" "$svc_dest"
+        _template_install_paths "$path_dest" "$svc_dest"
         $SUDO systemctl daemon-reload 2>/dev/null || true
         $SUDO systemctl restart helixscreen-update.path 2>/dev/null || true
         log_success "Updated watcher units ($reason)"
@@ -6927,14 +7160,9 @@ install_update_watcher_systemd() {
         return 0
     fi
 
-    local install_dir="${INSTALL_DIR:-/opt/helixscreen}"
-
     $SUDO cp "$path_src" "$path_dest"
     $SUDO cp "$svc_src" "$svc_dest"
-
-    # Template the install directory path in both units
-    _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$path_dest"
-    _sed_inplace "s|@@INSTALL_DIR@@|${install_dir}|g" "$svc_dest"
+    _template_install_paths "$path_dest" "$svc_dest"
 
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable helixscreen-update.path 2>/dev/null || true
@@ -7564,8 +7792,20 @@ has_update_manager_section() {
     grep -q '^\[update_manager helixscreen\]' "$conf" 2>/dev/null
 }
 
+# The channel Moonraker's type:web updater should follow. Moonraker accepts
+# only stable and beta here; the dev channel has no Moonraker lane and rides
+# beta, the closest published feed.
+update_manager_web_channel() {
+    case "${R2_CHANNEL:-stable}" in
+        beta | dev) echo "beta" ;;
+        *) echo "stable" ;;
+    esac
+}
+
 # Generate update_manager configuration block
 generate_update_manager_config() {
+    local web_channel
+    web_channel=$(update_manager_web_channel)
     cat << EOF
 
 # HelixScreen Update Manager
@@ -7575,7 +7815,7 @@ generate_update_manager_config() {
 # A systemd path unit handles service restart after Moonraker extracts the update.
 [update_manager helixscreen]
 type: web
-channel: stable
+channel: ${web_channel}
 repo: prestonbrown/helixscreen
 path: ${INSTALL_DIR}
 EOF
@@ -7795,6 +8035,45 @@ disable_system_updates_on_buildroot() {
 # Options like persistent_files, managed_services, and install_script are
 # not supported and cause Moonraker to log "unparsed config option" warnings.
 # Args: $1 = moonraker.conf path
+# Point an existing stanza's `channel:` at the channel this install resolved.
+# The value is interpolated when the section is first added and nothing
+# revisits it, so a user who switches the app to beta keeps being offered
+# stable from Mainsail/Fluidd until the stanza is rewritten.
+# Args: $1 = moonraker.conf path
+sync_update_manager_channel() {
+    local conf="$1"
+    local current want
+
+    want=$(update_manager_web_channel)
+
+    current=$(awk '
+        /^\[update_manager helixscreen\]/ { found=1; next }
+        found && /^\[/ { exit }
+        found && /^channel:/ { sub(/^channel:[[:space:]]*/, ""); print; exit }
+    ' "$conf" 2>/dev/null)
+
+    # A stanza without a channel line (hand-written) is Moonraker's default
+    # stable; leave it to the operator rather than inserting one.
+    if [ -z "$current" ] || [ "$current" = "$want" ]; then
+        return 0
+    fi
+
+    log_info "Updating update_manager channel: ${current} -> ${want}"
+    local fs
+    fs=$(file_sudo "$conf")
+    $fs cp "$conf" "${conf}.bak.helixscreen" 2>/dev/null || true
+
+    $fs awk -v want="$want" '
+        /^\[update_manager helixscreen\]/ { in_section=1 }
+        in_section && /^\[/ && !/^\[update_manager helixscreen\]/ { in_section=0 }
+        in_section && /^channel:/ { print "channel: " want; next }
+        { print }
+    ' "$conf" > "${conf}.tmp" && $fs mv "${conf}.tmp" "$conf"
+
+    log_success "update_manager channel now ${want}"
+    _UPDATE_MANAGER_SYNCED=yes
+}
+
 cleanup_unsupported_options() {
     local conf="$1"
 
@@ -8078,6 +8357,12 @@ configure_moonraker_updates() {
 
     if has_update_manager_section "$conf"; then
         log_info "update_manager section already exists in $conf"
+        # Set by sync_update_manager_channel; Moonraker reads its config only at
+        # startup, so a rewritten stanza needs a restart before Mainsail sees it.
+        _UPDATE_MANAGER_SYNCED=""
+        # channel: is only ever written when the section is first added, so
+        # rewrite it to whatever this update resolved to.
+        sync_update_manager_channel "$conf"
         # Remove options not supported by type: web (persistent_files,
         # managed_services, install_script) that cause Moonraker warnings.
         cleanup_unsupported_options "$conf"
@@ -8085,6 +8370,9 @@ configure_moonraker_updates() {
         disable_system_updates_on_buildroot "$conf"
         # Still ensure asvc is correct even if section already exists
         ensure_moonraker_asvc "$conf"
+        if [ "$_UPDATE_MANAGER_SYNCED" = "yes" ]; then
+            restart_moonraker
+        fi
         return 0
     fi
 
@@ -9468,6 +9756,27 @@ _disabled_services_ledger_candidates() {
     done
 }
 
+# Enable a unit for the next boot. A failure is reported with the command that
+# fixes it by hand, and does not stop the uninstall: what follows still has to run.
+enable_unit_or_warn() {
+    if ! $SUDO systemctl enable "$1" 2>/dev/null; then
+        log_warn "Could not re-enable $1. Run: sudo systemctl enable --now $1"
+    fi
+}
+
+# Remove the QIDI .3mf thumbnail helper units (prestonbrown/helixscreen#1713).
+# The helper script itself ships in $INSTALL_DIR/config/ and rides the install
+# dir's removal out; the generated PNGs under gcodes/.thumbs stay. No-op when
+# the units are absent (they are only installed on QIDI-class systemd hosts).
+uninstall_qidi_3mf_thumbs() {
+    $SUDO systemctl stop helixscreen-3mf-thumbs.path 2>/dev/null || true
+    $SUDO systemctl disable helixscreen-3mf-thumbs.path 2>/dev/null || true
+    $SUDO systemctl disable helixscreen-3mf-thumbs.service 2>/dev/null || true
+    $SUDO rm -f /etc/systemd/system/helixscreen-3mf-thumbs.path
+    $SUDO rm -f /etc/systemd/system/helixscreen-3mf-thumbs.service
+    return 0
+}
+
 # Re-enable services that were disabled during installation
 # Reads the state file and reverses each recorded disable action
 #
@@ -9508,7 +9817,7 @@ reenable_disabled_services() {
         case "$type" in
             systemd)
                 log_info "Re-enabling systemd service: $target"
-                $SUDO systemctl enable "$target" 2>/dev/null || true
+                enable_unit_or_warn "$target"
                 HELIX_REENABLED_UNITS="${HELIX_REENABLED_UNITS} ${target}"
                 ;;
             sysv-chmod)
@@ -9859,6 +10168,7 @@ uninstall() {
         $SUDO systemctl disable helixscreen-update.path 2>/dev/null || true
         $SUDO rm -f /etc/systemd/system/helixscreen-update.path
         $SUDO rm -f /etc/systemd/system/helixscreen-update.service
+        uninstall_qidi_3mf_thumbs
         # Remove permission rules (udev, polkit)
         $SUDO rm -f /etc/udev/rules.d/99-helixscreen-backlight.rules
         $SUDO rm -f /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla
@@ -10118,6 +10428,7 @@ clean_old_installation() {
     $SUDO systemctl disable helixscreen-update.path 2>/dev/null || true
     $SUDO rm -f /etc/systemd/system/helixscreen-update.path
     $SUDO rm -f /etc/systemd/system/helixscreen-update.service
+    uninstall_qidi_3mf_thumbs
     # Remove permission rules (udev, polkit)
     $SUDO rm -f /etc/udev/rules.d/99-helixscreen-backlight.rules
     $SUDO rm -f /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla
@@ -10530,6 +10841,13 @@ main() {
     detect_init_system
     check_klipper_ecosystem "$platform"
 
+    # An update or reinstall must follow the channel the installed app is on:
+    # a beta user updating through KIAUH or a re-run of the installer would
+    # otherwise be handed the stable build. No-op on a fresh install.
+    if [ "$update_mode" = true ] || [ -d "$INSTALL_DIR" ]; then
+        resolve_update_channel
+    fi
+
     # Get version (skip if using local archive)
     if [ -n "$local_tarball" ]; then
         # Validate local file exists
@@ -10548,9 +10866,27 @@ main() {
     else
         if [ -z "$version" ]; then
             version=$(get_latest_version "$download_platform")
+        else
+            # After resolve_update_channel: a channel read from the installed
+            # config outranks the one a prerelease --version implies. A --local
+            # archive never moves the channel; it picks a build, not a feed.
+            match_channel_to_version "$version"
         fi
     fi
     log_info "Target version: ${BOLD}${version}${NC}"
+
+    # Download/stage the release archive BEFORE any step that modifies the
+    # running printer (stock-UI disable, competing-UI shutdown, old-install
+    # cleanup, service stop): a failed download must leave the machine exactly
+    # as it was - stock UI enabled, old install intact, service running. The
+    # download also needs the network, and stopping UIs can take it away
+    # (e.g. Snapmaker U1's stock GUI owns wpa_supplicant, so restarting it
+    # drops WiFi/SSH mid-update).
+    if [ -n "$local_tarball" ]; then
+        use_local_tarball "$local_tarball"
+    else
+        download_release "$version" "$download_platform"
+    fi
 
     # Configure platform-specific settings before stopping UIs
     configure_platform
@@ -10561,17 +10897,6 @@ main() {
     # Clean old installation if requested
     if [ "$clean_mode" = true ]; then
         clean_old_installation "$platform"
-    fi
-
-    # Download/stage the release archive BEFORE stopping the service.
-    # Stopping helixscreen first can disrupt the network on some platforms
-    # (e.g. Snapmaker U1 where platform_post_stop restarts the stock GUI which
-    # owns wpa_supplicant and drops WiFi/SSH mid-update). Staging first also
-    # means a failed download leaves the running service untouched.
-    if [ -n "$local_tarball" ]; then
-        use_local_tarball "$local_tarball"
-    else
-        download_release "$version" "$download_platform"
     fi
 
     if [ "$update_mode" = true ]; then
@@ -10599,6 +10924,12 @@ main() {
     # self-skips on the root-only platforms (ad5m/ad5x/k1/k2), when KLIPPER_USER
     # is root, and under NoNewPrivileges where sudo is unavailable.
     install_permission_rules "$platform"
+
+    # QIDI: take over the .3mf plate-thumbnail duty the stopped stock screen
+    # carried (prestonbrown/helixscreen#1713). No-op off QIDI-class hosts and
+    # on firmware whose Moonraker extracts thumbnails itself. Post-extract
+    # because the helper and its unit templates ship in the payload's config/.
+    install_qidi_3mf_thumbs
 
     # Install KIAUH extension if KIAUH is detected
     install_kiauh_extension "$skip_kiauh_registration" || true
@@ -10656,6 +10987,7 @@ main() {
     else
         seed_from_moonraker_detection || true
     fi
+    seed_update_channel
 
     # Configure ALSA "default" when the board has no card 0 (e.g. Pi + HDMI-audio
     # screens like the BTT HDMI5, whose only outputs are vc4hdmi0/vc4hdmi1 at

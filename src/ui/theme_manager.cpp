@@ -8,6 +8,7 @@
 #include "ui_fonts.h"
 #include "ui_gradient_canvas.h"
 #include "ui_icon.h"
+#include "ui_observer_guard.h"
 #include "ui_split_button.h"
 #include "ui_switch.h"
 
@@ -411,14 +412,69 @@ static double srgb_channel_luminance(uint8_t v) {
     return (c <= 0.03928) ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
 }
 
+/// WCAG relative luminance of a color.
+static double srgb_relative_luminance(lv_color_t c) {
+    return 0.2126 * srgb_channel_luminance(c.red) + 0.7152 * srgb_channel_luminance(c.green) +
+           0.0722 * srgb_channel_luminance(c.blue);
+}
+
+/// WCAG contrast ratio between two colors (1.0 = identical).
+static double srgb_contrast_ratio(lv_color_t a, lv_color_t b) {
+    const double la = srgb_relative_luminance(a), lb = srgb_relative_luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
 lv_color_t theme_manager_get_readable_on(lv_color_t fill) {
-    const double lum = 0.2126 * srgb_channel_luminance(fill.red) +
-                       0.7152 * srgb_channel_luminance(fill.green) +
-                       0.0722 * srgb_channel_luminance(fill.blue);
+    const double lum = srgb_relative_luminance(fill);
     // Contrast against white is (1.05 / (lum + 0.05)); against black it is
     // ((lum + 0.05) / 0.05). They cross where lum == sqrt(1.05 * 0.05) - 0.05.
     constexpr double kCrossover = 0.1791; // sqrt(0.0525) - 0.05
     return (lum > kCrossover) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
+}
+
+/// Core of the contrast_adjusted_text pair: returns @p text when it already
+/// clears @p min_ratio on @p fill, else the smallest blend toward its pole
+/// that does, else the readable pure pole.
+static lv_color_t contrast_adjusted_text_for_ratio(lv_color_t text, lv_color_t fill,
+                                                   double min_ratio) {
+    if (srgb_contrast_ratio(text, fill) >= min_ratio)
+        return text;
+
+    // Blend toward the pole on the text's own side of the fill so the theme's
+    // tint survives; the ratio rises monotonically with the blend amount.
+    const lv_color_t pole = (srgb_relative_luminance(text) > srgb_relative_luminance(fill))
+                                ? lv_color_hex(0xFFFFFF)
+                                : lv_color_hex(0x000000);
+
+    // Smallest 8-bit blend that clears the threshold. The ratio at mix 0 is
+    // the failing ratio checked above and grows monotonically toward the pole,
+    // so a binary search finds the first passing mix.
+    uint8_t lo = 0, hi = 255;
+    while (lo < hi) {
+        const uint8_t mid = lo + (hi - lo) / 2;
+        if (srgb_contrast_ratio(lv_color_mix(pole, text, mid), fill) >= min_ratio)
+            hi = mid;
+        else
+            lo = mid + 1;
+    }
+    const lv_color_t blended = lv_color_mix(pole, text, lo);
+    // Even the pure pole misses the threshold when no tint on the text's own
+    // side can reach it; fall back to whichever pure pole reads best.
+    if (srgb_contrast_ratio(blended, fill) < min_ratio)
+        return theme_manager_get_readable_on(fill);
+    return blended;
+}
+
+// NAMESPACE_OK: joins this header's global theme_manager_* free-function API
+lv_color_t theme_manager_get_contrast_adjusted_text(lv_color_t text, lv_color_t fill) {
+    return contrast_adjusted_text_for_ratio(text, fill, kThemeTextContrastThreshold);
+}
+
+// NAMESPACE_OK: joins this header's global theme_manager_* free-function API
+lv_color_t theme_manager_get_contrast_adjusted_text(lv_color_t text, lv_color_t fill,
+                                                    lv_color_t backing, lv_opa_t fill_opa,
+                                                    double min_ratio) {
+    return contrast_adjusted_text_for_ratio(text, lv_color_mix(fill, backing, fill_opa), min_ratio);
 }
 
 // ============================================================================
@@ -744,6 +800,9 @@ static ThemePalette convert_to_theme_palette(const theme_palette_t* p,
     palette.danger = p->danger;
     palette.focus = p->focus;
     palette.border_radius = resolve_border_radius(props);
+    palette.button_radius = helix::BorderRadiusSizes::button_pixels(
+        props.border_radius_size,
+        theme_manager_get_breakpoint_suffix(responsive_dimension(theme_display)));
     palette.border_width = props.border_width;
     palette.border_opacity = props.border_opacity;
     palette.shadow_width = props.shadow_intensity;
@@ -1582,6 +1641,7 @@ static void theme_manager_register_semantic_colors(lv_xml_component_scope_t* sco
                                    SWATCH_DESC_BUF_SIZE, swatch_descriptions[i]);
             char key[24];
             snprintf(key, sizeof(key), "swatch_%zu_desc", i);
+            ObserverGuard::mark_subject_teardown_exempt(&swatch_desc_subjects[i]);
             lv_xml_register_subject(nullptr, key, &swatch_desc_subjects[i]);
         }
         swatch_descs_initialized = true;
@@ -1739,6 +1799,7 @@ void theme_manager_init(lv_display_t* display, bool use_dark_mode_param) {
     if (!theme_subject_initialized) {
         lv_subject_init_int(&theme_changed_subject, 0);
         theme_subject_initialized = true;
+        ObserverGuard::mark_subject_teardown_exempt(&theme_changed_subject);
     }
 
     // Override runtime theme constants based on light/dark mode preference
@@ -1786,6 +1847,7 @@ void theme_manager_init(lv_display_t* display, bool use_dark_mode_param) {
         } else {
             lv_subject_set_int(&ui_breakpoint_subject, to_int(bp));
         }
+        ObserverGuard::mark_subject_teardown_exempt(&ui_breakpoint_subject);
         lv_xml_register_subject(nullptr, "ui_breakpoint", &ui_breakpoint_subject);
         spdlog::debug("[Theme] Registered ui_breakpoint subject: {} (min_dim={})", to_int(bp),
                       resp_res);
@@ -1804,6 +1866,7 @@ void theme_manager_init(lv_display_t* display, bool use_dark_mode_param) {
         } else {
             lv_subject_set_int(&ui_breakpoint_v_subject, to_int(vbp));
         }
+        ObserverGuard::mark_subject_teardown_exempt(&ui_breakpoint_v_subject);
         lv_xml_register_subject(nullptr, "ui_breakpoint_v", &ui_breakpoint_v_subject);
         spdlog::debug("[Theme] Registered ui_breakpoint_v subject: {} (vert_dim={})", to_int(vbp),
                       vert_res);
@@ -1826,6 +1889,7 @@ void theme_manager_init(lv_display_t* display, bool use_dark_mode_param) {
         } else {
             lv_subject_set_int(&ui_is_portrait_subject, is_portrait);
         }
+        ObserverGuard::mark_subject_teardown_exempt(&ui_is_portrait_subject);
         lv_xml_register_subject(nullptr, "ui_is_portrait", &ui_is_portrait_subject);
         spdlog::debug("[Theme] Registered ui_is_portrait subject: {} ({}x{})", is_portrait, hor_res,
                       ver_res);
@@ -2148,17 +2212,18 @@ static bool is_muted_text_font(const lv_font_t* font);
 /**
  * Helper to update button label text with contrast-aware color
  *
- * Uses theme_manager_get_contrast_color() which correctly picks dark text
- * (from light palette) for light backgrounds, and light text (from dark
- * palette) for dark backgrounds.
+ * A filled button is an accent surface: its text starts from the palette text
+ * colour and shifts toward its own pole just enough to stay readable
+ * (theme_manager_get_contrast_adjusted_text()).
  */
 static void apply_button_text_contrast(lv_obj_t* btn) {
     if (!btn)
         return;
 
-    // Get button's background color and pick contrast text via theme system
+    // Get button's background color and pick a readable foreground for it
     lv_color_t bg_color = lv_obj_get_style_bg_color(btn, LV_PART_MAIN);
-    lv_color_t text_color = theme_manager_get_contrast_color(bg_color);
+    lv_color_t current_text = theme_manager_get_color("text");
+    lv_color_t text_color = theme_manager_get_contrast_adjusted_text(current_text, bg_color);
 
     // Check for disabled state - use muted color
     bool btn_disabled = lv_obj_has_state(btn, LV_STATE_DISABLED);
@@ -2167,8 +2232,7 @@ static void apply_button_text_contrast(lv_obj_t* btn) {
         text_color = lv_color_mix(text_color, lv_color_hex(0x888888), 128);
     }
 
-    // Get current text colors to detect text/muted-variant icons
-    lv_color_t current_text = theme_manager_get_color("text");
+    // Get current muted color to detect text/muted-variant icons
     lv_color_t current_muted = theme_manager_get_color("text_muted");
 
     // Also check contrast text from both palettes for icon detection
@@ -2176,10 +2240,13 @@ static void apply_button_text_contrast(lv_obj_t* btn) {
     lv_color_t dark_text = tm.dark_palette().text;
     lv_color_t light_text = tm.light_palette().text;
 
-    // Helper lambda to check if icon color is a "text-like" color that should get contrast
+    // Helper lambda to check if icon color is a "text-like" color that should get contrast.
+    // Pure black and white count: they are what a previous pass of this helper
+    // wrote, and a re-preview against a different fill must be free to flip them.
     auto is_text_variant_color = [&](lv_color_t c) {
         return lv_color_eq(c, current_text) || lv_color_eq(c, current_muted) ||
-               lv_color_eq(c, dark_text) || lv_color_eq(c, light_text);
+               lv_color_eq(c, dark_text) || lv_color_eq(c, light_text) ||
+               lv_color_eq(c, lv_color_black()) || lv_color_eq(c, lv_color_white());
     };
 
     // Update all label children in the button

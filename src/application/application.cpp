@@ -762,10 +762,7 @@ int Application::run(int argc, char** argv) {
     // Set multi-printer subjects from config (needed for navbar badge binding)
     {
         auto printer_ids = m_config->get_printer_ids();
-        auto active_id = m_config->get_active_printer_id();
-        std::string printer_name =
-            m_config->get<std::string>(m_config->df() + "printer_name", active_id);
-        get_printer_state().set_active_printer_name(printer_name);
+        get_printer_state().set_active_printer_name(m_config->get_active_printer_name());
         get_printer_state().set_multi_printer_enabled(printer_ids.size() > 1);
     }
 
@@ -782,7 +779,7 @@ int Application::run(int argc, char** argv) {
 
     // Initialize UpdateChecker before panel subjects (subjects must exist for XML binding)
     // On Android the checker still runs (so "Check for Updates" works), but
-    // "Install Update" redirects to the Play Store instead of self-updating.
+    // "Install Update" opens the store or release page the APK came from.
     UpdateChecker::instance().init();
 
     // Initialize UpgradeBanner — creates the persistent top-banner widget on
@@ -820,6 +817,10 @@ int Application::run(int argc, char** argv) {
         shutdown();
         return 1;
     }
+
+    // init_display() forces the backlight to 100% so the panel is visible before
+    // any setting is loaded; the saved brightness exists only from here on.
+    m_display->ensure_display_on();
 
     // Phase 9d: Start Moonraker connection early (during splash)
     // Discovery runs async — by the time UI is created and splash exits,
@@ -1387,7 +1388,7 @@ bool Application::init_logging() {
 
     // Set libhv log level from config (CLI -v flags don't affect libhv)
     spdlog::level::level_enum hv_spdlog_level = parse_level(config_level, spdlog::level::warn);
-    hlog_set_level(to_hv_level(hv_spdlog_level));
+    hlog_set_level(libhv_level_for(hv_spdlog_level));
 
     return true;
 }
@@ -1913,6 +1914,10 @@ bool Application::init_panel_subjects() {
             using helix::detection::DetectionPolicy;
             if (!SettingsManager::instance().get_detection_enabled())
                 return;
+            // A detection pause waits on the user; a sleeping screen would hide it.
+            if (auto* display = DisplayManager::instance()) {
+                display->wake_display();
+            }
             if (p == DetectionPolicy::NotifyOnly) {
                 ToastManager::instance().show(ToastSeverity::WARNING,
                                               lv_tr("Spaghetti detected — print paused"), 8000);
@@ -2981,6 +2986,22 @@ void Application::setup_discovery_callbacks() {
                     AppConstants::Update::backup_fallback_dir() + "/self_restart_sentinel";
                 if (fs::remove(sentinel, ec)) {
                     spdlog::info("[Application] Cleaned up self-restart sentinel");
+                    // Moonraker re-reads release_info.json only on a refresh, and its
+                    // own schedule can be a week apart, so Mainsail keeps showing the
+                    // version we just replaced. "helixscreen" is the update_manager
+                    // section the installer writes; a missing or renamed section, or a
+                    // print in progress, just gets an error back.
+                    client->send_jsonrpc(
+                        "machine.update.refresh", json{{"name", "helixscreen"}},
+                        [](const json&) {
+                            spdlog::info("[Application] Moonraker refreshed its HelixScreen "
+                                         "version after the update");
+                        },
+                        [](const MoonrakerError& err) {
+                            spdlog::debug("[Application] Moonraker update refresh declined: {}",
+                                          err.message);
+                        },
+                        0, /*silent=*/true);
                 }
                 // Legacy: best-effort under PrivateTmp (sees private /tmp,
                 // not real /tmp — stale real sentinels cleaned on reboot)
@@ -3260,8 +3281,9 @@ void Application::setup_discovery_callbacks() {
             // Also gated on hw_changed: unresolved guided steps are purely a function of
             // (saved config, current hardware). If hardware is unchanged since the last
             // discovery, the result is identical and re-launching the wizard would just
-            // harass the user. The wizard cancel callback persists the decline, so the
-            // next discovery with the SAME hardware would also see no unresolved steps —
+            // harass the user. Ending the wizard session (Finish or Cancel) persists
+            // the decline, so the next discovery with the SAME hardware would also see
+            // no unresolved steps —
             // the hw_changed gate is defense-in-depth for the rare case where a prior
             // session was killed before the decline could be persisted.
             auto reconfig_steps = helix::unresolved_guided_steps(Config::get_instance(), hw);
@@ -3286,26 +3308,26 @@ void Application::setup_discovery_callbacks() {
                 ui_wizard_register_event_callbacks();
                 ui_wizard_container_register_responsive_constants();
                 ui_wizard_init_subjects();
-                // Cancel = dismiss the targeted session. Without this, Back on the first
-                // targeted step is a no-op (no prior step to retreat to). Cancelling an
-                // UNSATISFIABLE role (no candidate hardware exists) must also record the
-                // decision — otherwise the wizard re-launches on every reconnect forever.
-                // decline_unresolved_guided_roles() writes "" (declined) for each still-
-                // Unresolved guided role with a present saved key, read against the CURRENT
-                // discovered hardware (api->hardware()) at cancel time.
+                // Ending the session — Cancel here, Finish in the on_complete callback
+                // below — settles every guided role the session's steps could not
+                // resolve: a step only offers controls for the roles it shows (the fan
+                // step has no aux dropdown), so a preset-saved role with no live match
+                // can never be satisfied inside the session and would relaunch the
+                // wizard on every boot. settle_targeted_reconfig() writes "" (declined)
+                // for each such role, read against the CURRENT discovered hardware.
                 set_wizard_cancel_callback([api]() {
-                    // Record the cancel as a decline for each still-Unresolved guided
-                    // role (writes "" + saves internally). reapply_hardware_roles() is
-                    // intentionally NOT called here: ui_wizard_complete_targeted() fires
-                    // the on_complete callback (registered in ui_wizard_create_targeted
-                    // below), which already reapplies the roles. Calling it here too
-                    // would be a redundant double reapply.
-                    helix::decline_unresolved_guided_roles(Config::get_instance(), api->hardware());
+                    // reapply_hardware_roles() is intentionally NOT called here:
+                    // ui_wizard_complete_targeted() fires the on_complete callback
+                    // (registered in ui_wizard_create_targeted below), which already
+                    // reapplies the roles. Calling it here too would be a redundant
+                    // double reapply.
+                    helix::settle_targeted_reconfig(Config::get_instance(), api->hardware());
                     ui_wizard_complete_targeted();
                     set_wizard_cancel_callback(nullptr);
                 });
-                ui_wizard_create_targeted(app->m_screen, reconfig_steps, [app]() {
+                ui_wizard_create_targeted(app->m_screen, reconfig_steps, [app, api]() {
                     set_wizard_cancel_callback(nullptr);
+                    helix::settle_targeted_reconfig(Config::get_instance(), api->hardware());
                     app->reapply_hardware_roles();
                 });
             }
@@ -4701,8 +4723,7 @@ void Application::switch_printer(const std::string& printer_id) {
     NavigationManager::instance().set_active(PanelId::Home);
 
     // Show toast with the new printer name
-    std::string printer_name =
-        m_config->get<std::string>(m_config->df() + "printer_name", printer_id);
+    std::string printer_name = m_config->get_printer_display_name(printer_id, printer_id);
     std::string toast_msg = fmt::format(fmt::runtime(lv_tr("Connected to {}")), printer_name);
     ToastManager::instance().show(ToastSeverity::INFO, toast_msg.c_str());
 
@@ -4900,7 +4921,13 @@ void Application::tear_down_printer_state() {
 
     // 14. Destroy all static panel/overlay globals (releases ObserverGuards).
     //     Subjects are still alive here, so lv_observer_remove() works correctly.
-    StaticPanelRegistry::instance().destroy_all();
+    //     The overlay roots the panel destructors hand back are freed right
+    //     here: LVGL is alive, the destroy_all() window is closed, and on a
+    //     soft restart nothing else deletes them - each open overlay is
+    //     400-800KB that would otherwise stay allocated as a hidden screen
+    //     child once per switch. Application::shutdown() keeps calling
+    //     destroy_all() directly: lv_deinit() frees every widget there.
+    helix::ui::destroy_static_panels();
 
     // 15. Release global observer guards that observe subjects about to be freed
     ui_notification_deinit();
@@ -4991,10 +5018,7 @@ void Application::init_printer_state() {
     // 2b. Set multi-printer subjects from config
     {
         auto printer_ids = m_config->get_printer_ids();
-        auto active_id = m_config->get_active_printer_id();
-        std::string printer_name =
-            m_config->get<std::string>(m_config->df() + "printer_name", active_id);
-        get_printer_state().set_active_printer_name(printer_name);
+        get_printer_state().set_active_printer_name(m_config->get_active_printer_name());
         get_printer_state().set_multi_printer_enabled(printer_ids.size() > 1);
     }
 

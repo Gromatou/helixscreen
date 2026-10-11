@@ -8,6 +8,7 @@
 #include "config_testing.h"
 #include "runtime_config.h"
 #include "static_subject_registry.h"
+#include "test_helpers/unique_temp_dir.h"
 #include "wizard_config_paths.h"
 
 #include <cstdlib>
@@ -1023,7 +1024,7 @@ class FreshConfigFixture {
     Config config;
 
     FreshConfigFixture() {
-        temp_dir_ = (std::filesystem::temp_directory_path() / "helix_fresh_config_test").string();
+        temp_dir_ = helix::test::unique_temp_dir("helix_fresh_config_test");
         std::filesystem::remove_all(temp_dir_);
         std::filesystem::create_directories(temp_dir_);
 
@@ -1438,8 +1439,7 @@ TEST_CASE("Config::init() should NOT write log_level to new config file",
     // The fix (Step 5) will remove log_level from defaults, making this pass.
 
     // Create a temp directory for the test config
-    std::string temp_dir =
-        std::filesystem::temp_directory_path().string() + "/helix_test_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test");
     std::filesystem::create_directories(temp_dir);
     std::string temp_config_path = temp_dir + "/test_config.json";
 
@@ -1520,8 +1520,7 @@ struct BackupGuard {
     bool had_home;
 
     BackupGuard()
-        : temp_dir(std::filesystem::temp_directory_path().string() + "/helix_nobackup_" +
-                   std::to_string(getpid()) + "_" + std::to_string(rand())),
+        : temp_dir(helix::test::unique_temp_dir("helix_nobackup")),
           prev_state_dir(AppConstants::Update::detail::state_dir_ref()),
           prev_fallback_dir(AppConstants::Update::detail::backup_fallback_dir_ref()),
           had_home(std::getenv("HOME") != nullptr) {
@@ -1562,8 +1561,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
     REQUIRE(config.get<bool>("/sounds_enabled") == true);
 
     // Run init on a temp file to trigger migrations
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_migration_test_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_migration_test");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -1589,8 +1587,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
                  "Config: config already at version 1 does NOT get sounds flipped",
                  "[core][config][migration][versioning]") {
     // Config that was already migrated — user may have re-enabled sounds
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_migration_test_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_migration_test");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -1623,8 +1620,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
     // config this test is asserting about.
 
     // Brand new config — no file exists
-    std::string temp_dir = std::filesystem::temp_directory_path().string() + "/helix_fresh_test_" +
-                           std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_fresh_test");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/fresh_config.json";
 
@@ -1650,8 +1646,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
                  "Config: v0 config without sounds_enabled key just gets version stamp",
                  "[config][migration][versioning]") {
     // Edge case: old config that somehow never had sounds_enabled
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_nosound_test_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_nosound_test");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -1682,7 +1677,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
 
 TEST_CASE("Config: v3→v4 migration restructures single printer to multi-printer",
           "[core][config][migration][v4]") {
-    std::string temp_dir = "/tmp/helix_test_v3_to_v4";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v3_to_v4");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -1744,7 +1739,7 @@ TEST_CASE("Config: v3→v4 migration restructures single printer to multi-printe
 
 TEST_CASE("Config: v3→v4 migration uses 'default' when printer has no name",
           "[core][config][migration][v4]") {
-    std::string temp_dir = "/tmp/helix_test_v3_to_v4_noname";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v3_to_v4_noname");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -1768,7 +1763,7 @@ TEST_CASE("Config: v3→v4 migration uses 'default' when printer has no name",
 
 TEST_CASE("Config: v3→v4 migration skips if /printers already exists",
           "[core][config][migration][v4]") {
-    std::string temp_dir = "/tmp/helix_test_v3_skip";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v3_skip");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -1798,7 +1793,7 @@ TEST_CASE("Config: v3→v4 migration skips if /printers already exists",
 
 TEST_CASE("Config: v3→v4 migration moves printer_image to per-printer path",
           "[core][config][migration][v4]") {
-    std::string temp_dir = "/tmp/helix_test_v3_to_v4_printer_image";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v3_to_v4_printer_image");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -1840,7 +1835,7 @@ TEST_CASE("Config: v3→v4 migration moves printer_image to per-printer path",
 
 TEST_CASE("Config: v4→v5 migration disables printer switcher for single-printer config",
           "[core][config][migration][v5]") {
-    std::string temp_dir = "/tmp/helix_test_v4_to_v5_single";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v4_to_v5_single");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -1866,7 +1861,7 @@ TEST_CASE("Config: v4→v5 migration disables printer switcher for single-printe
 
 TEST_CASE("Config: v4→v5 migration skips when multiple printers configured",
           "[core][config][migration][v5]") {
-    std::string temp_dir = "/tmp/helix_test_v4_to_v5_multi";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v4_to_v5_multi");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -1898,7 +1893,7 @@ TEST_CASE("Config: v4→v5 migration skips when multiple printers configured",
 
 TEST_CASE("Config: v13→v14 imports legacy telemetry_config.json when settings lacks key",
           "[core][config][migration][v14]") {
-    std::string temp_dir = "/tmp/helix_test_v13_to_v14_import";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v13_to_v14_import");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string settings_path = temp_dir + "/test_config.json";
@@ -1929,7 +1924,7 @@ TEST_CASE("Config: v13→v14 imports legacy telemetry_config.json when settings 
 }
 
 TEST_CASE("Config: v13→v14 preserves disabled legacy state", "[core][config][migration][v14]") {
-    std::string temp_dir = "/tmp/helix_test_v13_to_v14_disabled";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v13_to_v14_disabled");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string settings_path = temp_dir + "/test_config.json";
@@ -1958,7 +1953,7 @@ TEST_CASE("Config: v13→v14 does NOT overwrite existing /telemetry_enabled",
           "[core][config][migration][v14]") {
     // Regression guard for the original bug: settings.json had the key set;
     // legacy telemetry_config.json should never silently override it.
-    std::string temp_dir = "/tmp/helix_test_v13_to_v14_no_overwrite";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v13_to_v14_no_overwrite");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string settings_path = temp_dir + "/test_config.json";
@@ -1994,7 +1989,7 @@ TEST_CASE("Config: v13→v14 does NOT overwrite existing /telemetry_enabled",
 // key, and must clear the legacy key so it cannot be read back later.
 TEST_CASE("Config: v22→v23 rewrites macro widget skip_param_prompt",
           "[core][config][migration][v23]") {
-    std::string temp_dir = "/tmp/helix_test_v22_to_v23";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v22_to_v23");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string settings_path = temp_dir + "/test_config.json";
@@ -2055,7 +2050,7 @@ TEST_CASE("Config: v22→v23 rewrites macro widget skip_param_prompt",
 // migration over a rewritten document would be a no-op only by luck otherwise.
 TEST_CASE("Config: v22→v23 leaves an already-migrated config alone",
           "[core][config][migration][v23]") {
-    std::string temp_dir = "/tmp/helix_test_v23_idempotent";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v23_idempotent");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string settings_path = temp_dir + "/test_config.json";
@@ -2091,7 +2086,7 @@ TEST_CASE("Config: v22→v23 leaves an already-migrated config alone",
 
 TEST_CASE("Config: v13→v14 is a no-op when no legacy file exists",
           "[core][config][migration][v14]") {
-    std::string temp_dir = "/tmp/helix_test_v13_to_v14_noop";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v13_to_v14_noop");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string settings_path = temp_dir + "/test_config.json";
@@ -2117,8 +2112,7 @@ TEST_CASE("Config: v13→v14 is a no-op when no legacy file exists",
 TEST_CASE_METHOD(ConfigTestFixture,
                  "Config: v14→v15 restores AD5X sleep preset after wizard override",
                  "[core][config][migration][versioning]") {
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_migration_v15_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_migration_v15");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -2152,8 +2146,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
 TEST_CASE_METHOD(ConfigTestFixture,
                  "Config: v14→v15 restores AD5X sleep preset (multi-printer config)",
                  "[core][config][migration][versioning]") {
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_migration_v15_mp_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_migration_v15_mp");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -2186,8 +2179,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
 TEST_CASE_METHOD(ConfigTestFixture,
                  "Config: v14→v15 preserves user workaround (sleep_backlight_off=false only)",
                  "[core][config][migration][versioning]") {
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_migration_v15_workaround_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_migration_v15_workaround");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -2215,8 +2207,7 @@ TEST_CASE_METHOD(ConfigTestFixture,
 // Non-AD5X printers must not be touched by the migration.
 TEST_CASE_METHOD(ConfigTestFixture, "Config: v14→v15 does not affect non-AD5X printers",
                  "[core][config][migration][versioning]") {
-    std::string temp_dir = std::filesystem::temp_directory_path().string() +
-                           "/helix_migration_v15_cc1_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_migration_v15_cc1");
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
 
@@ -2246,7 +2237,7 @@ TEST_CASE_METHOD(ConfigTestFixture, "Config: v14→v15 does not affect non-AD5X 
 
 TEST_CASE("Config: v4→v5 migration preserves explicit show_printer_switcher setting",
           "[core][config][migration][v5]") {
-    std::string temp_dir = "/tmp/helix_test_v4_to_v5_explicit";
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v4_to_v5_explicit");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -2918,7 +2909,7 @@ TEST_CASE_METHOD(ConfigTestFixture, "save works normally with regular file (no s
 }
 
 TEST_CASE("Config::init migrates helixconfig.json to settings.json", "[config]") {
-    auto tmp = std::filesystem::temp_directory_path() / "test_config_migration";
+    auto tmp = std::filesystem::path(helix::test::unique_temp_dir("test_config_migration"));
     std::filesystem::remove_all(tmp);
     std::filesystem::create_directories(tmp / "config");
 
@@ -3113,7 +3104,7 @@ struct TarballTestEnv {
     HomeGuard home;
 
     explicit TarballTestEnv(const std::string& name)
-        : dir("/tmp/helix_test_" + name + "_" + std::to_string(getpid())),
+        : dir(helix::test::unique_temp_dir("helix_test_" + name)),
           config_path((dir / "settings.json").string()),
           backup_dir((dir / ".helixscreen").string()), home(dir.string()) {
         std::filesystem::remove_all(dir);
@@ -3121,7 +3112,8 @@ struct TarballTestEnv {
     }
 
     ~TarballTestEnv() {
-        std::filesystem::remove_all(dir);
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
     }
 
     void write_config(const json& j) {
@@ -3365,7 +3357,7 @@ TEST_CASE("Config::init() keeps tarball default when backup is corrupt",
 
 TEST_CASE("Config: v10→v11 migration moves heat rates and strips heating phases",
           "[core][config][migration][v11]") {
-    std::string temp_dir = "/tmp/helix_test_v10_to_v11_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v10_to_v11");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -3431,7 +3423,7 @@ TEST_CASE("Config: v10→v11 migration moves heat rates and strips heating phase
 }
 
 TEST_CASE("Config: v10→v11 migration is idempotent", "[core][config][migration][v11]") {
-    std::string temp_dir = "/tmp/helix_test_v10_to_v11_idempotent_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v10_to_v11_idempotent");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -3468,7 +3460,7 @@ TEST_CASE("Config: v10→v11 migration is idempotent", "[core][config][migration
 
 TEST_CASE("Config: v10→v11 migration handles missing calibration data gracefully",
           "[core][config][migration][v11]") {
-    std::string temp_dir = "/tmp/helix_test_v10_to_v11_empty_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v10_to_v11_empty");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -3495,7 +3487,7 @@ TEST_CASE("Config: v10→v11 migration handles missing calibration data graceful
 
 TEST_CASE("Config: v11→v12 migration consolidates chamber keys for all printers",
           "[core][config][migration][v12]") {
-    std::string temp_dir = "/tmp/helix_test_v11_to_v12_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v11_to_v12");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -3547,7 +3539,7 @@ TEST_CASE("Config: v11→v12 migration consolidates chamber keys for all printer
 
 TEST_CASE("Config: v11→v12 migration does not overwrite canonical keys already set",
           "[core][config][migration][v12]") {
-    std::string temp_dir = "/tmp/helix_test_v11_to_v12_existing_" + std::to_string(rand());
+    std::string temp_dir = helix::test::unique_temp_dir("helix_test_v11_to_v12_existing");
     std::filesystem::remove_all(temp_dir);
     std::filesystem::create_directories(temp_dir);
     std::string temp_path = temp_dir + "/test_config.json";
@@ -3591,7 +3583,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("BASIC tier with Flying Toasters: type flipped to 0 and notice queued") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::BASIC);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_basic_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_basic");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3617,7 +3609,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("EMBEDDED tier with Flying Toasters: type flipped to 0 and notice queued") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::EMBEDDED);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_embedded_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_embedded");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3643,7 +3635,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("STANDARD tier with Flying Toasters: setting untouched, no notice flag") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::STANDARD);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_standard_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_standard");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3667,7 +3659,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("BASIC tier with Starfield (type=2): untouched, no notice flag") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::BASIC);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_starfield_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_starfield");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3691,7 +3683,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("BASIC tier with Pipes 3D (type=3): untouched, no notice flag") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::BASIC);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_pipes_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_pipes");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3715,7 +3707,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("BASIC tier with screensaver already Off (type=0): no-op, no notice flag") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::BASIC);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_off_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_off");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3739,7 +3731,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
     SECTION("Already-v16 config: migration does not run, type stays as set") {
         helix::config_testing::set_forced_tier_for_migration(helix::PlatformTier::BASIC);
 
-        std::string temp_dir = "/tmp/helix_test_v15_to_v16_already_v16_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v15_to_v16_already_v16");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3765,7 +3757,7 @@ TEST_CASE("Config: v15→v16 migration disables Flying Toasters on constrained t
 TEST_CASE("Config: v16→v17 migration renames retired Voron printer_image IDs",
           "[core][config][migration][v17]") {
     SECTION("voron-24r2 and voron-0-2 rewritten; unrelated values left alone") {
-        std::string temp_dir = "/tmp/helix_test_v16_to_v17_rename_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v16_to_v17_rename");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3806,7 +3798,7 @@ TEST_CASE("Config: v16→v17 migration renames retired Voron printer_image IDs",
     }
 
     SECTION("Already-v17 config: migration does not run") {
-        std::string temp_dir = "/tmp/helix_test_v16_to_v17_already_" + std::to_string(rand());
+        std::string temp_dir = helix::test::unique_temp_dir("helix_test_v16_to_v17_already");
         std::filesystem::remove_all(temp_dir);
         std::filesystem::create_directories(temp_dir);
         std::string temp_path = temp_dir + "/test_config.json";
@@ -3863,8 +3855,7 @@ struct BackupSandbox {
     bool had_home;
 
     explicit BackupSandbox(const std::string& name)
-        : dir("/tmp/helix_test_" + name + "_" + std::to_string(getpid()) + "_" +
-              std::to_string(rand())),
+        : dir(helix::test::unique_temp_dir("helix_test_" + name)),
           prev_state_dir(AppConstants::Update::detail::state_dir_ref()),
           prev_fallback_dir(AppConstants::Update::detail::backup_fallback_dir_ref()),
           had_home(std::getenv("HOME") != nullptr) {
@@ -4182,7 +4173,7 @@ TEST_CASE("Config::resolve_path applies HELIX_CONFIG_DIR without losing the file
     SECTION("resolve_path agrees with the path init() actually persists to") {
         // The banner and init() must never disagree about where settings live.
         std::filesystem::path dir =
-            std::filesystem::temp_directory_path() / "helix-resolve-path-init";
+            std::filesystem::path(helix::test::unique_temp_dir("helix-resolve-path-init"));
         std::filesystem::remove_all(dir);
         setenv("HELIX_CONFIG_DIR", dir.string().c_str(), 1);
 
@@ -4324,4 +4315,69 @@ TEST_CASE("Config::init() loads a read-only settings.json instead of condemning 
     fs::permissions(cfg, fs::perms::owner_all);
     REQUIRE_FALSE(fs::exists(cfg.string() + ".corrupt"));
     REQUIRE(fs::exists(cfg));
+}
+
+// ============================================================================
+// Invalid UTF-8 must not cost the user their settings (#1493).
+//
+// nlohmann's default error handler is error_handler_t::strict: dump() throws
+// json::type_error.316 on a string holding a byte no UTF-8 decoder accepts.
+// The strings that reach settings.json are the ones nothing validates — SSIDs,
+// printer and tool names, file names — so the document has to stay writable
+// with the offending bytes replaced, not be dropped whole.
+// ============================================================================
+
+TEST_CASE("Config::save() persists a document holding invalid UTF-8",
+          "[core][config][save][utf8]") {
+    BackupSandbox env("save_invalid_utf8");
+    ConfigDirEnvGuard config_dir_guard;
+    ConfigTestModeGuard test_mode(true);
+
+    const std::string cfg = env.config_path();
+
+    Config test_config;
+    test_config.init(cfg);
+    test_config.set<int>("/brightness", 42);
+    // 0xFF is not a legal UTF-8 lead byte in any position.
+    test_config.set<std::string>("/printers/default/printer_name",
+                                 std::string("Voron \xff\xfe 2.4"));
+
+    REQUIRE(test_config.save());
+
+    std::ifstream in(cfg);
+    REQUIRE(in.good());
+    json on_disk = json::parse(in);
+
+    // Every other setting the user changed is on disk.
+    CHECK(on_disk["brightness"] == 42);
+    // The offending string is stored with the bad bytes replaced, and nothing
+    // that could be preserved was thrown away.
+    REQUIRE(on_disk["printers"]["default"].contains("printer_name"));
+    const std::string name = on_disk["printers"]["default"]["printer_name"].get<std::string>();
+    CHECK(name.rfind("Voron ", 0) == 0);
+    CHECK(name.find(" 2.4") != std::string::npos);
+    CHECK(name.find('\xff') == std::string::npos);
+}
+
+// A printer added by address has no name or type until it connects and is identified.
+TEST_CASE_METHOD(ConfigTestFixture,
+                 "Config: a printer's display name is its name, then its type, then its host",
+                 "[core][config][multi-printer]") {
+    set_data_for_plural_test({{"active_printer_id", "voron"},
+                              {"printers",
+                               {{"voron", {{"printer_name", "Voron 2.4"}, {"type", "Voron"}}},
+                                {"printer-2", {{"moonraker_host", "10.0.0.2"}}},
+                                {"printer-3", {{"moonraker_host", "10.0.0.3"}, {"type", "AD5M"}}},
+                                {"printer-4", nlohmann::json::object()}}}});
+    CHECK(config.get_printer_display_name("voron", "-") == "Voron 2.4");
+    CHECK(config.get_printer_display_name("printer-3", "-") == "AD5M");
+    CHECK(config.get_printer_display_name("printer-2", "-") == "10.0.0.2");
+    CHECK(config.get_printer_display_name("printer-4", "-") == "-");
+
+    ConfigTestAccess::active_printer_id(config) = "voron";
+    CHECK(config.get_active_printer_name() == "Voron 2.4");
+    ConfigTestAccess::active_printer_id(config) = "printer-2";
+    CHECK(config.get_active_printer_name() == "10.0.0.2");
+    ConfigTestAccess::active_printer_id(config) = "printer-4";
+    CHECK(config.get_active_printer_name() == "printer-4");
 }

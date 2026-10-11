@@ -68,6 +68,41 @@ struct PrintHistoryJob {
     bool has_timelapse = false; ///< True if timelapse file was found for this job
 };
 
+namespace helix {
+
+/**
+ * @brief When a job happened, for ageing and bucketing it
+ *
+ * Moonraker leaves end_time null, parsed as 0, on in_progress rows and on rows
+ * it marks interrupted at startup, so those fall back to start_time
+ * (prestonbrown/helixscreen#1713). 0 when neither is known.
+ */
+[[nodiscard]] inline double job_timestamp(const PrintHistoryJob& job) {
+    return job.end_time > 0 ? job.end_time : job.start_time;
+}
+
+/**
+ * @brief A job thumbnail's path from the gcodes root, ready to download
+ *
+ * History metadata gives each thumbnail's relative_path relative to the G-code
+ * file's own directory, so "sub/dir/Foo.gcode" with ".thumbs/Foo.png" resolves
+ * to "sub/dir/.thumbs/Foo.png". A root-level job's path is unchanged.
+ */
+[[nodiscard]] inline std::string job_thumbnail_path(const PrintHistoryJob& job,
+                                                    const std::string& relative_path) {
+    return resolve_gcode_thumbnail_path(relative_path, job.filename);
+}
+
+/**
+ * @brief Count jobs into trend buckets, oldest first, the newest ending at @p now
+ * @param span_all Stretch the buckets from the oldest job to now instead of
+ *                 using @p period_seconds
+ */
+std::vector<int> count_trend_buckets(const std::vector<PrintHistoryJob>& jobs, double now,
+                                     int period_count, double period_seconds, bool span_all);
+
+} // namespace helix
+
 /**
  * @brief Aggregated history statistics
  *
@@ -120,6 +155,26 @@ struct FilamentUsageByType {
     if (status == "in_progress" || status == "printing")
         return PrintJobStatus::IN_PROGRESS;
     return PrintJobStatus::UNKNOWN;
+}
+
+/**
+ * @brief Get the display word for a status
+ * @param status Job status
+ * @return Untranslated label, which is also its translation tag ("Completed", "Failed", ...)
+ */
+[[nodiscard]] inline const char* status_to_label(PrintJobStatus status) {
+    switch (status) {
+    case PrintJobStatus::COMPLETED:
+        return "Completed";
+    case PrintJobStatus::CANCELLED:
+        return "Cancelled";
+    case PrintJobStatus::ERROR:
+        return "Failed";
+    case PrintJobStatus::IN_PROGRESS:
+        return "In Progress";
+    default:
+        return "Unknown";
+    }
 }
 
 /**
