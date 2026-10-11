@@ -925,6 +925,7 @@ translations:
   'Error: Verification failed': 'Erreur : échec de la vérification'
   'Error: Wrong architecture': 'Erreur : mauvaise architecture'
   'Error: `unzip` not installed': 'Erreur : `unzip` non installé'
+  'Error: cannot write the service file in {}': 'Erreur : impossible d''écrire le fichier de service dans {}'
   Errors only: 'Erreurs uniquement'
   Escalate to emergency stop if cancel doesn't respond: Escalader vers l'arrêt d'urgence
     si l'annulation ne répond pas

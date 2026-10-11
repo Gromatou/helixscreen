@@ -619,6 +619,87 @@ std::string strip_ansi_codes(const std::string& s) {
 
 } // anonymous namespace
 
+std::string UpdateChecker::install_failure_detail(const std::vector<std::string>& lines) {
+    std::string bracket_error, error, warning;
+    for (const auto& raw : lines) {
+        const std::string line = strip_ansi_codes(raw);
+        // A step that completed outlived whatever it logged: errors from
+        // best-effort steps before it are not why the install stopped.
+        if (line.find(" ... ok") != std::string::npos) {
+            bracket_error.clear();
+            error.clear();
+            warning.clear();
+            continue;
+        }
+        // run_logged's "<command> failed (exit N):" carries no [ERROR] tag.
+        if (line.find("[ERROR]") != std::string::npos ||
+            line.find(" failed (exit ") != std::string::npos) {
+            // A refusal block is cause-first, advice-after; the first
+            // substantive line is the cause, and a bare "[ERROR]" separator
+            // names nothing.
+            const auto tag = line.find("[ERROR]");
+            const bool substantive =
+                line.find(" failed (exit ") != std::string::npos ||
+                (tag != std::string::npos &&
+                 line.find_first_not_of(" \t", tag + 7) != std::string::npos);
+            if (substantive && bracket_error.empty()) {
+                bracket_error = line;
+            }
+        }
+        if (line.find("ERROR") != std::string::npos || line.find("FAILED") != std::string::npos) {
+            error = line;
+        } else if (line.find("WARNING") != std::string::npos) {
+            warning = line;
+        }
+    }
+    std::string detail =
+        !bracket_error.empty() ? bracket_error : (!error.empty() ? error : warning);
+    detail.erase(0, detail.find_first_not_of(" \t"));
+    return detail;
+}
+
+std::string UpdateChecker::service_dest_probe_error(const std::string& init_dir) {
+    if (init_dir.empty()) {
+        return "";
+    }
+    // A NEW file per attempt: an in-place overwrite of an existing file needs
+    // no fresh blocks and succeeds on a full filesystem, which would read as
+    // "has room". Unique name so a crashed probe's leftover never satisfies a
+    // later existence check.
+    const std::string probe =
+        init_dir + "/.helixscreen-space-probe." + std::to_string(getpid());
+    FILE* f = std::fopen(probe.c_str(), "wb");
+    if (f == nullptr) {
+        spdlog::warn("[UpdateChecker] Service destination probe could not create {}: {}",
+                     probe, strerror(errno));
+        return fmt::format(lv_tr("Error: cannot write the service file in {}"), init_dir);
+    }
+    std::fputs("probe\n", f);
+    const bool clean = std::ferror(f) == 0;
+    const bool closed = std::fclose(f) == 0;
+    std::remove(probe.c_str());
+    if (clean && closed) {
+        return "";
+    }
+    spdlog::warn("[UpdateChecker] Service destination probe failed to write {}", probe);
+    return fmt::format(lv_tr("Error: cannot write the service file in {}"), init_dir);
+}
+
+std::string UpdateChecker::init_service_dest_dir() {
+    // Same resolution order as install.sh's detect_init_system: systemd when
+    // it is running, else SysV. Empty means this host has no init destination
+    // we know (a dev machine) and the installer's own pre-flight decides.
+    struct stat st {};
+    if (stat("/run/systemd/system", &st) == 0 && S_ISDIR(st.st_mode) &&
+        stat("/etc/systemd/system", &st) == 0 && S_ISDIR(st.st_mode)) {
+        return "/etc/systemd/system";
+    }
+    if (stat("/etc/init.d", &st) == 0 && S_ISDIR(st.st_mode)) {
+        return "/etc/init.d";
+    }
+    return "";
+}
+
 // ============================================================================
 // Channel Version Comparison
 // ============================================================================
@@ -1250,6 +1331,25 @@ void UpdateChecker::start_download() {
         TelemetryManager::instance().record_update_failure("print_in_progress", "",
                                                            get_platform_key());
         return;
+    }
+
+    // Fail fast where the installer would refuse anyway: the service
+    // definition is the one payload piece that lands on the root filesystem,
+    // and on boards whose root overlay is full the installer refuses only
+    // AFTER the app has downloaded the whole archive. Root only — a non-root
+    // app never installs directly, and install.sh's pre-flight under sudo
+    // remains the authority.
+    if (geteuid() == 0) {
+        const std::string failure = service_dest_probe_error(init_service_dest_dir());
+        if (!failure.empty()) {
+            spdlog::error("[UpdateChecker] Service destination unwritable, not "
+                          "downloading: {}", failure);
+            report_download_status(DownloadStatus::Error, 0, failure,
+                                   "Service destination unwritable before download");
+            TelemetryManager::instance().record_update_failure("service_dest_unwritable", "",
+                                                               get_platform_key());
+            return;
+        }
     }
 
     // Must have a cached update to download
@@ -1994,8 +2094,7 @@ void UpdateChecker::do_install(const std::string& tarball_path) {
     // process is killed by systemd's stop_service during the install step.
     int ret = -1;
     bool timed_out = false;
-    std::string last_error_line;   // last line containing ERROR or FAILED
-    std::string last_warning_line; // last line containing WARNING (lower priority)
+    std::vector<std::string> install_output; // install.sh output, for the UI detail
     {
         int log_fd = open(install_log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0640);
         if (log_fd < 0) {
@@ -2120,15 +2219,7 @@ void UpdateChecker::do_install(const std::string& tarball_path) {
                 }
                 spdlog::info("[install.sh] {}", line);
                 line_count++;
-                // Capture last ERROR/WARNING line for UI display.
-                // Prioritize ERROR/FAILED over WARNING so rollback messages
-                // don't mask the actual failure reason.
-                std::string s(line);
-                if (s.find("ERROR") != std::string::npos || s.find("FAILED") != std::string::npos) {
-                    last_error_line = strip_ansi_codes(s);
-                } else if (s.find("WARNING") != std::string::npos) {
-                    last_warning_line = strip_ansi_codes(s);
-                }
+                install_output.emplace_back(line);
             }
             flog_info("[UpdateChecker] ---- end install.sh output ({} lines) ----", line_count);
             fclose(lf);
@@ -2152,7 +2243,7 @@ void UpdateChecker::do_install(const std::string& tarball_path) {
         // Build a user-visible error message with detail from the install log
         std::string ui_text =
             timed_out ? lv_tr("Installation timed out") : lv_tr("Installation failed");
-        const auto& detail = !last_error_line.empty() ? last_error_line : last_warning_line;
+        const std::string detail = install_failure_detail(install_output);
         if (!detail.empty()) {
             ui_text += "\n" + detail;
         }

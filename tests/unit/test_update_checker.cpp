@@ -2555,3 +2555,133 @@ TEST_CASE_METHOD(HelixTestFixture,
     helix::ui::UpdateQueue::instance().drain();
     checker.shutdown();
 }
+
+TEST_CASE("UpdateChecker install_failure_detail names the cause, not the step",
+          "[update_checker][install_failure_detail]") {
+    using UC = UpdateChecker;
+
+    SECTION("an [ERROR] line wins over a later FAILED step line") {
+        const std::vector<std::string> lines = {
+            "[3/6] Downloaded ... ok (40 MB)",
+            "      \033[0;31m[ERROR]\033[0m Not enough space on /opt (12MB free)",
+            "[4/6] Installed files ... FAILED",
+            "Nothing on your printer was changed after this step.",
+        };
+        REQUIRE(UC::install_failure_detail(lines) ==
+                "[ERROR] Not enough space on /opt (12MB free)");
+    }
+
+    SECTION("the first substantive [ERROR] line is the one shown") {
+        const std::vector<std::string> lines = {
+            "[ERROR] first",
+            "[ERROR] second",
+            "[2/6] Downloaded ... FAILED",
+        };
+        REQUIRE(UC::install_failure_detail(lines) == "[ERROR] first");
+    }
+
+    SECTION("a refusal block names its cause first; the how-to-fix tail is not it") {
+        // check_service_dest_space prints an [ERROR] block: the failing
+        // operation, then the filesystem, then what the user should do. The
+        // closing advice line points at context the touchscreen never shows.
+        const std::vector<std::string> lines = {
+            "[ERROR] Cannot write the service definition to /etc/init.d.",
+            "[ERROR] Filesystem: overlayfs:/overlay (0MB free) -- full or read-only.",
+            "[ERROR] ",
+            "[ERROR] Deleting print files or gcode will NOT help.",
+            "[ERROR] Free a few MB there, then re-run this installer.",
+        };
+        REQUIRE(UC::install_failure_detail(lines) ==
+                "[ERROR] Cannot write the service definition to /etc/init.d.");
+    }
+
+    SECTION("a content-free [ERROR] separator is never the cause") {
+        const std::vector<std::string> lines = {
+            "[ERROR] ",
+            "[ERROR] real cause",
+        };
+        REQUIRE(UC::install_failure_detail(lines) == "[ERROR] real cause");
+    }
+
+    SECTION("without an [ERROR] line, the last ERROR or FAILED line") {
+        const std::vector<std::string> lines = {
+            "[WARN] careful",
+            "[2/6] Downloaded ... FAILED (interrupted)",
+        };
+        REQUIRE(UC::install_failure_detail(lines) == "[2/6] Downloaded ... FAILED (interrupted)");
+    }
+
+    SECTION("an error before a completed step is not the cause") {
+        const std::vector<std::string> lines = {
+            "      [ERROR] Could not seed settings",
+            "[5/6] Connected to Moonraker ... ok (update manager)",
+            "      systemctl enable helixscreen failed (exit 1):",
+            "        Failed to enable unit: Unit file helixscreen.service is masked.",
+            "[6/6] Starting HelixScreen ... FAILED",
+        };
+        REQUIRE(UC::install_failure_detail(lines) ==
+                "systemctl enable helixscreen failed (exit 1):");
+    }
+
+    SECTION("a completed step clears earlier errors and warnings") {
+        const std::vector<std::string> lines = {
+            "[ERROR] stale",
+            "WARNING: stale",
+            "[4/6] Set up service ... ok",
+            "[5/6] Connecting to Moonraker ... FAILED (interrupted)",
+        };
+        REQUIRE(UC::install_failure_detail(lines) ==
+                "[5/6] Connecting to Moonraker ... FAILED (interrupted)");
+    }
+
+    SECTION("a failed command outranks a later FAILED step line") {
+        const std::vector<std::string> lines = {
+            "      apt-get install -y unzip failed (exit 100):",
+            "        E: Unable to locate package unzip",
+            "[2/7] Installing libraries ... FAILED",
+        };
+        REQUIRE(UC::install_failure_detail(lines) == "apt-get install -y unzip failed (exit 100):");
+    }
+
+    SECTION("a WARNING line only when nothing failed louder") {
+        const std::vector<std::string> lines = {"ok", "WARNING: low disk"};
+        REQUIRE(UC::install_failure_detail(lines) == "WARNING: low disk");
+    }
+
+    SECTION("nothing to show") {
+        REQUIRE(UC::install_failure_detail({"all fine"}).empty());
+    }
+}
+
+TEST_CASE("UpdateChecker service_dest_probe_error mirrors the installer's write probe",
+          "[update_checker][1778]") {
+    using UC = UpdateChecker;
+    namespace fs = std::filesystem;
+    const fs::path base =
+        fs::temp_directory_path() / ("helix-probe-" + std::to_string(getpid()));
+    fs::remove_all(base);
+    fs::create_directories(base);
+
+    // The operation under test is a NEW-file write: overwriting an existing
+    // file needs no fresh blocks and succeeds on a full filesystem, which is
+    // why the probe must create its own file and leave nothing behind.
+    SECTION("a writable init dir probes clean and leaves no litter") {
+        REQUIRE(UC::service_dest_probe_error(base.string()).empty());
+        std::error_code ec;
+        CHECK(fs::is_empty(base, ec));
+    }
+
+    SECTION("a missing init dir is a failure, not a pass") {
+        const std::string msg = UC::service_dest_probe_error((base / "absent").string());
+        REQUIRE_FALSE(msg.empty());
+        CHECK(msg.find("absent") != std::string::npos);
+    }
+
+    SECTION("a path under a non-directory fails for any uid") {
+        const fs::path blocker = base / "blocker";
+        { std::ofstream out(blocker); out << "x"; }
+        REQUIRE_FALSE(UC::service_dest_probe_error((blocker / "init.d").string()).empty());
+    }
+
+    fs::remove_all(base);
+}

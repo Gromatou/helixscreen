@@ -819,6 +819,7 @@
   <translation tag="Error: Verification failed" ru="Ошибка: проверка не удалась"/>
   <translation tag="Error: Wrong architecture" ru="Ошибка: неверная архитектура"/>
   <translation tag="Error: `unzip` not installed" ru="Ошибка: `unzip` не установлен"/>
+  <translation tag="Error: cannot write the service file in {}" ru="Ошибка: не удалось записать файл службы в {}"/>
   <translation tag="Errors only" ru="Только ошибки"/>
   <translation tag="Escalate to emergency stop if cancel doesn&apos;t respond" ru="Эскалация до аварийной остановки, если отмена не отвечает"/>
   <translation tag="Escalation Timeout" ru="Тайм-аут эскалации"/>

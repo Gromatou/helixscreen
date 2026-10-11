@@ -289,6 +289,52 @@ class UpdateChecker {
     static std::string compute_update_staging_dir(const std::string& tarball_path,
                                                   const std::string& install_root);
 
+    /**
+     * @brief The line of install.sh output the UI shows when an install fails.
+     * @param lines The install log, one entry per line.
+     * @return The first substantive "[ERROR]" or "<command> failed (exit N):"
+     *         line of the final failing block; else the last line with ERROR or
+     *         FAILED; else the last WARNING line; ANSI color stripped. Empty if
+     *         none. Only lines after the last completed step ("... ok") count.
+     *
+     * The installer's step line ("[n/N] <title> ... FAILED") comes after the
+     * lines that explain it, so a plain last-match would show the step's name
+     * instead of its cause. Its refusal blocks are cause-first, advice-after,
+     * so within a block the FIRST substantive [ERROR] line is the cause; the
+     * closing advice line points at log context the touchscreen never shows.
+     * Best-effort steps log errors and carry on, so an error before a
+     * completed step is not the cause.
+     */
+    static std::string install_failure_detail(const std::vector<std::string>& lines);
+
+    /**
+     * @brief Probe the init destination with a real new-file write, before the
+     *        archive download.
+     * @param init_dir The directory the service definition installs into
+     *                 (/etc/init.d or /etc/systemd/system).
+     * @return "" when a new file can be created there, else a user-facing
+     *         failure line naming the directory.
+     *
+     * Mirrors the installer's check_service_dest_space: the service definition
+     * is the one update payload that lands on the root filesystem (a ~97MB
+     * overlay on K1-class boards, a different partition from the install dir),
+     * so a free-space check on the install dir says nothing about it. The probe
+     * must create a NEW file: overwriting an existing one needs no fresh blocks
+     * and succeeds on a full filesystem.
+     */
+    static std::string service_dest_probe_error(const std::string& init_dir);
+
+    /**
+     * @brief The directory the service definition installs into on this host.
+     * @return "/etc/systemd/system" when systemd runs, "/etc/init.d" for SysV,
+     *         "" when neither shape is present (a dev machine; the installer's
+     *         own pre-flight then decides).
+     *
+     * Same resolution order as install.sh's detect_init_system, so the probe
+     * aims at the filesystem the installer will actually write.
+     */
+    static std::string init_service_dest_dir();
+
     std::string get_platform_asset_name() const;
 
     /// Single source of truth for the release asset name Moonraker's update

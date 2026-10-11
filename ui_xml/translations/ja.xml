@@ -819,6 +819,7 @@
   <translation tag="Error: Verification failed" ja="エラー: 検証に失敗しました"/>
   <translation tag="Error: Wrong architecture" ja="エラー: アーキテクチャが正しくありません"/>
   <translation tag="Error: `unzip` not installed" ja="エラー: `unzip` がインストールされていません"/>
+  <translation tag="Error: cannot write the service file in {}" ja="エラー: {} にサービスファイルを書き込めません"/>
   <translation tag="Errors only" ja="エラーのみ"/>
   <translation tag="Escalate to emergency stop if cancel doesn&apos;t respond" ja="キャンセルが応答しない場合は緊急停止にエスカレート"/>
   <translation tag="Escalation Timeout" ja="エスカレーションタイムアウト"/>

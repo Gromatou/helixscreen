@@ -833,6 +833,7 @@ translations:
   'Error: Verification failed': 'エラー: 検証に失敗しました'
   'Error: Wrong architecture': 'エラー: アーキテクチャが正しくありません'
   'Error: `unzip` not installed': 'エラー: `unzip` がインストールされていません'
+  'Error: cannot write the service file in {}': 'エラー: {} にサービスファイルを書き込めません'
   Errors only: 'エラーのみ'
   Escalate to emergency stop if cancel doesn't respond: キャンセルが応答しない場合は緊急停止にエスカレート
   Escalation Timeout: エスカレーションタイムアウト

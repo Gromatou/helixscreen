@@ -921,6 +921,7 @@ translations:
   'Error: Verification failed': 'Fehler: Überprüfung fehlgeschlagen'
   'Error: Wrong architecture': 'Fehler: Falsche Architektur'
   'Error: `unzip` not installed': 'Fehler: `unzip` nicht installiert'
+  'Error: cannot write the service file in {}': 'Fehler: Servicedatei kann nicht in {} geschrieben werden'
   Errors only: 'Nur Fehler'
   Escalate to emergency stop if cancel doesn't respond: Auf Not-Stopp eskalieren,
     falls Abbruch nicht reagiert

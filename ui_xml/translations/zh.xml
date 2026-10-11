@@ -819,6 +819,7 @@
   <translation tag="Error: Verification failed" zh="错误: 验证失败"/>
   <translation tag="Error: Wrong architecture" zh="错误: 架构错误"/>
   <translation tag="Error: `unzip` not installed" zh="错误: 未安装 `unzip`"/>
+  <translation tag="Error: cannot write the service file in {}" zh="错误: 无法将服务文件写入 {}"/>
   <translation tag="Errors only" zh="仅错误"/>
   <translation tag="Escalate to emergency stop if cancel doesn&apos;t respond" zh="如果取消无响应则升级为紧急停止"/>
   <translation tag="Escalation Timeout" zh="升级超时"/>

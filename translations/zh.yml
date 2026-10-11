@@ -827,6 +827,7 @@ translations:
   'Error: Verification failed': '错误: 验证失败'
   'Error: Wrong architecture': '错误: 架构错误'
   'Error: `unzip` not installed': '错误: 未安装 `unzip`'
+  'Error: cannot write the service file in {}': '错误: 无法将服务文件写入 {}'
   Errors only: '仅错误'
   Escalate to emergency stop if cancel doesn't respond: 如果取消无响应则升级为紧急停止
   Escalation Timeout: 升级超时

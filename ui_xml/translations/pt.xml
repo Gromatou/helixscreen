@@ -819,6 +819,7 @@
   <translation tag="Error: Verification failed" pt="Erro: Verificação falhou"/>
   <translation tag="Error: Wrong architecture" pt="Erro: Arquitetura incorreta"/>
   <translation tag="Error: `unzip` not installed" pt="Erro: `unzip` não instalado"/>
+  <translation tag="Error: cannot write the service file in {}" pt="Erro: não é possível gravar o arquivo de serviço em {}"/>
   <translation tag="Errors only" pt="Apenas erros"/>
   <translation tag="Escalate to emergency stop if cancel doesn&apos;t respond" pt="Escalar para parada de emergência se cancelar não responder"/>
   <translation tag="Escalation Timeout" pt="Tempo de Escalação"/>

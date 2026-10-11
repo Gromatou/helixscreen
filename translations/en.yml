@@ -884,6 +884,7 @@ translations:
   'Error: Verification failed': 'Error: Verification failed'
   'Error: Wrong architecture': 'Error: Wrong architecture'
   'Error: `unzip` not installed': 'Error: `unzip` not installed'
+  'Error: cannot write the service file in {}': 'Error: cannot write the service file in {}'
   Errors only: Errors only
   Escalate to emergency stop if cancel doesn't respond: Escalate to emergency stop
     if cancel doesn't respond

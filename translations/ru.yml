@@ -901,6 +901,7 @@ translations:
   'Error: Verification failed': 'Ошибка: проверка не удалась'
   'Error: Wrong architecture': 'Ошибка: неверная архитектура'
   'Error: `unzip` not installed': 'Ошибка: `unzip` не установлен'
+  'Error: cannot write the service file in {}': 'Ошибка: не удалось записать файл службы в {}'
   Errors only: 'Только ошибки'
   Escalate to emergency stop if cancel doesn't respond: Эскалация до аварийной остановки,
     если отмена не отвечает
