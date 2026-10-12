@@ -601,6 +601,15 @@ class AmsBackendCfs : public AmsSubscriptionBackend {
     // Callback lifetime management
     helix::AsyncLifetimeGuard lifetime_;
 
+    /// True once a frame carried the auto-refill enable bit, so
+    /// AmsSystemInfo::endless_spool_enabled holds the firmware's answer rather
+    /// than its constructed default. Guarded by mutex_.
+    bool endless_spool_enable_reported_ = false;
+
+    /// Records a toggle_auto_refill send Klipper completed as the current state
+    /// and announces it. Takes mutex_ itself; main thread.
+    void record_auto_refill_sent(bool enable);
+
     /// Dispatch a load/unload/swap CR_BOX_* script with proper completion
     /// semantics: ensures the toolhead is homed, sends the gcode, and flips
     /// `system_info_.action` back to IDLE *only when Klipper finishes the
