@@ -564,7 +564,7 @@ These are the **stock K2** commands (`CfsMacroVariant::K2`). Two other dialects 
 | Command | Description |
 |---------|-------------|
 | `BOX_ENABLE_CFS_PRINT ENABLE={0\|1}` | Enable/disable CFS for printing |
-| `BOX_ENABLE_AUTO_REFILL ENABLE={0\|1}` | **Setter, not a toggle.** The handler reads an int via `gcmd.get_int`, so it sets auto-refill on or off rather than flipping it. **Parameter spelling RECOVERED** (2026-08-17): Creality's own master-server sends `BOX_ENABLE_AUTO_REFILL ENABLE=1` / `ENABLE=0` — present in the string tables of both OTA images (K1 `CR4CU220812S11_ota_img_V2.3.5.34.img`, K2 Plus `CR0CN240110C10_ota_img_V1.1.4.11.img`). HelixScreen's `toggle_auto_refill` device action inverts the last box-reported flag and sends the explicit argument. |
+| `BOX_ENABLE_AUTO_REFILL ENABLE={0\|1}` | **Setter, not a toggle.** The handler reads an int via `gcmd.get_int`, so it sets auto-refill on or off rather than flipping it. **Parameter spelling RECOVERED** (2026-08-17): Creality's own master-server sends `BOX_ENABLE_AUTO_REFILL ENABLE=1` / `ENABLE=0` — present in the string tables of both OTA images (K1 `CR4CU220812S11_ota_img_V2.3.5.34.img`, K2 Plus `CR0CN240110C10_ota_img_V1.1.4.11.img`). HelixScreen's `toggle_auto_refill` device action sends the switch's value (with no value, the inverse of the cached flag) as the explicit argument. |
 | `BOX_SET_BOX_MODE` | Set CFS operating mode |
 | `BOX_SET_TEMP` | Set extrusion temperature |
 | `BOX_SET_PRE_LOADING ADDR={n} NUM={n} ACTION=RUN` | Pre-load filament |
