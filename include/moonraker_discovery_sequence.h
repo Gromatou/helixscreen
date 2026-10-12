@@ -272,9 +272,8 @@ class MoonrakerDiscoverySequence {
      *        empty object when that query failed — which reads as "assume
      *        available" (prestonbrown/helixscreen#1351).
      * @param probe_local_endpoints Fall back to probing loopback camera ports
-     *        when the registry has nothing usable. Off on builds without a
-     *        camera widget: they need only a registered snapshot URL, and an
-     *        AD5X kernel crashes when a streamer is woken on v4l2_open.
+     *        when the registry has nothing usable. Off on AD5X, whose kernel
+     *        crashes when a streamer is woken on v4l2_open.
      */
     void detect_webcam(json service_state, bool probe_local_endpoints);
 

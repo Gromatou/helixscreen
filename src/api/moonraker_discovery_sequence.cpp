@@ -750,18 +750,24 @@ void MoonrakerDiscoverySequence::continue_discovery_objects(uint64_t seq) {
                     }
                 }
 
-                // Fire-and-forget webcam detection - independent of components list.
-                // Runs on every build: a platform without a camera widget still
-                // reads the registered snapshot URL for the QR scanner's snapshot
-                // polling (prestonbrown/helixscreen#1788). Only the loopback
-                // fallback probes are skipped there.
-                //
-                // machine.system_info is fetched first because it feeds two
-                // consumers: the OS/CPU hardware fields, and the camera
-                // service_state the webcam decision cross-checks (#1351). A failed
-                // query is fatal for neither — webcam detection still runs, with an
-                // empty service_state that reads as "assume available".
-                constexpr bool probe_local_cameras = HELIX_HAS_CAMERA != 0;
+            // Fire-and-forget webcam detection - independent of components list.
+            // Runs on every build: a platform without a camera widget still
+            // reads the registered snapshot URL for the QR scanner's snapshot
+            // polling, and a stock K1 serves its camera on loopback without
+            // registering it (prestonbrown/helixscreen#1788).
+            //
+            // machine.system_info is fetched first because it feeds two
+            // consumers: the OS/CPU hardware fields, and the camera
+            // service_state the webcam decision cross-checks (#1351). A failed
+            // query is fatal for neither — webcam detection still runs, with an
+            // empty service_state that reads as "assume available".
+            // Loopback probing is off only on AD5X, whose kernel crashes when a
+            // camera streamer is woken on v4l2_open.
+#ifdef HELIX_PLATFORM_AD5X
+                constexpr bool probe_local_cameras = false;
+#else
+                constexpr bool probe_local_cameras = true;
+#endif
                 client_.send_jsonrpc(
                     "machine.system_info", json::object(),
                     [this](json sys_response) {
