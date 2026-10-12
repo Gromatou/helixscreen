@@ -12,6 +12,7 @@
 #include "gcode_selection_style.h"
 #include "lv_draw_buf_guard.h"
 #include "runtime_config.h"
+#include "scoped_guard_file.h"
 
 #include <spdlog/spdlog.h>
 
@@ -465,6 +466,14 @@ bool GCodeGLESRenderer::init_gl() {
         return true;
     if (gl_init_failed_)
         return false;
+
+    // Layer 2 covers driver init too: loading the GPU driver can fault before any
+    // draw is reached. A graceful failure removes the guard on return and the
+    // viewer falls back to 2D for this session; only a fault inside leaves it for
+    // the next startup to promote.
+    const helix::ScopedGuardFile init_guard(helix::writable_path("gpu_3d_guard"));
+    if (!init_guard.armed())
+        spdlog::warn("[GCode GLES] Could not write GPU crash-loop guard: {}", init_guard.path());
 
 #if LV_USE_SDL
     // Desktop path: use SDL_GL_CreateContext with a hidden window.
