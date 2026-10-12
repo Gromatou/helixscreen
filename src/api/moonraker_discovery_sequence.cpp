@@ -312,10 +312,10 @@ void MoonrakerDiscoverySequence::parse_system_info(const json& sys_response) {
 //
 // @param service_state `service_state` out of machine.system_info, or an empty
 //        object when that query failed - which reads as "assume available".
-void MoonrakerDiscoverySequence::detect_webcam(json service_state) {
+void MoonrakerDiscoverySequence::detect_webcam(json service_state, bool probe_local_endpoints) {
     client_.send_jsonrpc(
         "server.webcams.list", json::object(),
-        [service_state = std::move(service_state)](json response) {
+        [service_state = std::move(service_state), probe_local_endpoints](json response) {
             bool has_webcam = false;
             json chosen_entry = json::object();
             std::string chosen_name;
@@ -452,6 +452,9 @@ void MoonrakerDiscoverySequence::detect_webcam(json service_state) {
                              snapshot_url.empty() ? "<none>" : snapshot_url);
                 get_printer_state().set_webcam_available(true, stream_url, snapshot_url, flip_h,
                                                          flip_v, target_fps);
+            } else if (!probe_local_endpoints) {
+                spdlog::info("[Discovery] No usable Moonraker webcam");
+                get_printer_state().set_webcam_available(false);
             } else {
                 // No Moonraker webcam config — probe local camera endpoints
                 // Run synchronously on the WS callback instead of spawning a
@@ -748,39 +751,30 @@ void MoonrakerDiscoverySequence::continue_discovery_objects(uint64_t seq) {
                 }
 
                 // Fire-and-forget webcam detection - independent of components list.
-                // Skipped on platforms without a camera widget (HELIX_HAS_CAMERA=0:
-                // AD5M/AD5X/CC1/K1/K2/MIPS/SnapmakerU1). On AD5X specifically, the
-                // firmware's H.264 codec driver crashes the kernel on v4l2_open
-                // (dma_coherent_mem_available NULL deref → process killed by SIGBUS),
-                // so even probing for a webcam is unwanted.
+                // Runs on every build: a platform without a camera widget still
+                // reads the registered snapshot URL for the QR scanner's snapshot
+                // polling (prestonbrown/helixscreen#1788). Only the loopback
+                // fallback probes are skipped there.
                 //
                 // machine.system_info is fetched first because it feeds two
                 // consumers: the OS/CPU hardware fields, and the camera
                 // service_state the webcam decision cross-checks (#1351). A failed
                 // query is fatal for neither — webcam detection still runs, with an
                 // empty service_state that reads as "assume available".
+                constexpr bool probe_local_cameras = HELIX_HAS_CAMERA != 0;
                 client_.send_jsonrpc(
                     "machine.system_info", json::object(),
                     [this](json sys_response) {
                         parse_system_info(sys_response);
-#if HELIX_HAS_CAMERA
-                        detect_webcam(webcam::extract_service_state(sys_response));
-#endif
+                        detect_webcam(webcam::extract_service_state(sys_response),
+                                      probe_local_cameras);
                     },
                     [this](const MoonrakerError& err) {
                         spdlog::debug("[Moonraker Client] machine.system_info query failed, "
                                       "continuing: {}",
                                       err.message);
-#if HELIX_HAS_CAMERA
-                        detect_webcam(json::object());
-#endif
+                        detect_webcam(json::object(), probe_local_cameras);
                     });
-#if !HELIX_HAS_CAMERA
-                // No camera widget on this platform — explicitly mark unavailable
-                // so any consumer that observes the subject sees a definitive
-                // "no" instead of the default-constructed initial state.
-                get_printer_state().set_webcam_available(false);
-#endif // HELIX_HAS_CAMERA
 
                 // Fire-and-forget power device detection
                 discover_power_devices();
