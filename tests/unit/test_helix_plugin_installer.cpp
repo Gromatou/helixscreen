@@ -454,3 +454,17 @@ TEST_CASE("HelixPluginInstaller uninstall_local error handling", "[plugin_instal
         }
     }
 }
+
+TEST_CASE("script_output_lines strips install.sh color codes and blank lines",
+          "[plugin_installer]") {
+    const std::string out =
+        "\033[0;32m[INFO]\033[0m HelixPrint Auto-Install Mode\n"
+        "\n"
+        "\033[0;31m[ERROR]\033[0m Could not auto-detect Moonraker installation.\n"
+        "trailing without newline";
+    const auto lines = helix::script_output_lines(out);
+    REQUIRE(lines.size() == 3);
+    CHECK(lines[0] == "[INFO] HelixPrint Auto-Install Mode");
+    CHECK(lines[1] == "[ERROR] Could not auto-detect Moonraker installation.");
+    CHECK(lines[2] == "trailing without newline");
+}

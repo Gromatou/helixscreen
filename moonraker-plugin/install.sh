@@ -43,47 +43,121 @@ error() {
     exit 1
 }
 
-# Find Moonraker installation
-find_moonraker() {
-    moonraker_path=""
-    user_path="$1"
+# Moonraker source roots on known vendor layouts. Keep in step with
+# MOONRAKER_SRC_PATHS in scripts/lib/installer/moonraker.sh; a bats test
+# fails when an entry there is missing here.
+MOONRAKER_SRC_PATHS="
+/home/pi/moonraker
+/home/biqu/moonraker
+/home/mks/moonraker
+/home/qidi/moonraker
+/home/klipper/moonraker
+/home/lava/moonraker
+/root/moonraker
+/root/printer_software/moonraker
+/usr/data/moonraker
+/usr/share/moonraker
+/mnt/UDISK/moonraker
+/userdata/moonraker
+/opt/moonraker
+"
 
-    # Check common locations (iterate without arrays)
-    for loc in \
-        "$HOME/moonraker" \
-        "$HOME/klipper_config/moonraker" \
-        "/home/pi/moonraker" \
-        "/home/klipper/moonraker" \
-        "/root/printer_software/moonraker" \
-        "$user_path"
-    do
-        if [ -n "$loc" ] && [ -d "$loc/moonraker/components" ]; then
-            moonraker_path="$loc"
-            break
+# Config directories on known vendor layouts, the directories of
+# MOONRAKER_CONF_PATHS in scripts/lib/installer/moonraker.sh.
+MOONRAKER_CONFIG_DIRS="
+/home/pi/printer_data/config
+/home/pi/klipper_config
+/home/biqu/printer_data/config
+/home/mks/printer_data/config
+/home/qidi/printer_data/config
+/root/printer_data/config
+/opt/config/printer_data/config
+/opt/config
+/usr/data/config/printer_data/config
+/usr/data/printer_data/config
+/etc/klipper/config
+"
+
+# Where running processes are listed; tests point it at a fixture tree.
+PROC_ROOT="${HELIX_PROC_ROOT:-/proc}"
+
+# Print Moonraker's components directory under a source root. Three layouts:
+#   <root>/moonraker/components            git checkout (~/moonraker)
+#   <root>/components                      the package directory itself
+#   <root>/moonraker/moonraker/components  Creality K1/K2: the repo nested
+#                                          inside an install directory
+components_under() {
+    for sub in "$1/moonraker/components" "$1/components" "$1/moonraker/moonraker/components"; do
+        if [ -d "$sub" ]; then
+            printf '%s' "$sub"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Print the running Moonraker's argv, one argument per line.
+running_moonraker_args() {
+    for f in "$PROC_ROOT"/[0-9]*/cmdline; do
+        [ -r "$f" ] || continue
+        args=$(tr '\000' '\n' < "$f" 2>/dev/null) || continue
+        case "$args" in
+            *moonraker.py*)
+                printf '%s\n' "$args"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+# Print the argument following the first of the given flags in the running
+# Moonraker's argv.
+running_moonraker_arg() {
+    running_moonraker_args | awk -v a="$1" -v b="$2" 'p == a || p == b { print; exit } { p = $0 }'
+}
+
+# Find Moonraker's components directory. An explicit path wins, then the
+# user's home, then the Moonraker that is actually running (whatever its
+# layout), then the known vendor roots, then a pip-installed package.
+find_moonraker_components() {
+    for root in "$1" "$HOME/moonraker" "$HOME/klipper_config/moonraker"; do
+        if [ -n "$root" ] && components_under "$root"; then
+            return 0
         fi
     done
 
-    # Also check if moonraker is installed as a package
-    if [ -z "$moonraker_path" ]; then
-        pip_loc=$(python3 -c "import moonraker; print(moonraker.__path__[0])" 2>/dev/null || true)
-        if [ -n "$pip_loc" ] && [ -d "$pip_loc/components" ]; then
-            moonraker_path="$(dirname "$pip_loc")"
-        fi
+    script=$(running_moonraker_args | awk '/moonraker\.py$/ { print; exit }')
+    if [ -n "$script" ] && [ -d "$(dirname "$script")/components" ]; then
+        printf '%s' "$(dirname "$script")/components"
+        return 0
     fi
 
-    printf '%s' "$moonraker_path"
+    for root in $MOONRAKER_SRC_PATHS; do
+        if components_under "$root"; then
+            return 0
+        fi
+    done
+
+    pip_loc=$(python3 -c "import moonraker; print(moonraker.__path__[0])" 2>/dev/null || true)
+    if [ -n "$pip_loc" ] && [ -d "$pip_loc/components" ]; then
+        printf '%s' "$pip_loc/components"
+    fi
 }
 
-# Find config directory
+# Find the directory holding moonraker.conf: the user's home first, then the
+# running Moonraker's -c/-d arguments, then the known vendor layouts.
 find_config_dir() {
+    conf=$(running_moonraker_arg -c --configfile)
+    data=$(running_moonraker_arg -d --datapath)
     for loc in \
         "$HOME/printer_data/config" \
         "$HOME/klipper_config" \
-        "/home/pi/printer_data/config" \
-        "/home/pi/klipper_config" \
-        "/root/printer_data/config"
+        "${conf:+$(dirname "$conf")}" \
+        "${data:+$data/config}" \
+        $MOONRAKER_CONFIG_DIRS
     do
-        if [ -d "$loc" ] && [ -f "$loc/moonraker.conf" ]; then
+        if [ -n "$loc" ] && [ -d "$loc" ] && [ -f "$loc/moonraker.conf" ]; then
             printf '%s' "$loc"
             return 0
         fi
@@ -102,20 +176,13 @@ main() {
     fi
 
     # Find Moonraker
-    moonraker_path=$(find_moonraker "$1")
+    components_dir=$(find_moonraker_components "$1")
 
-    if [ -z "$moonraker_path" ]; then
+    if [ -z "$components_dir" ]; then
         error "Could not find Moonraker installation.
 Please provide the path: ./install.sh /path/to/moonraker"
     fi
 
-    components_dir="$moonraker_path/moonraker/components"
-
-    if [ ! -d "$components_dir" ]; then
-        error "Components directory not found: $components_dir"
-    fi
-
-    info "Found Moonraker at: $moonraker_path"
     info "Components directory: $components_dir"
     printf '\n'
 
@@ -156,13 +223,13 @@ Please remove it manually before installing."
 uninstall() {
     info "Uninstalling HelixPrint plugin..."
 
-    moonraker_path=$(find_moonraker "$1")
+    components_dir=$(find_moonraker_components "$1")
 
-    if [ -z "$moonraker_path" ]; then
+    if [ -z "$components_dir" ]; then
         error "Could not find Moonraker installation."
     fi
 
-    target="$moonraker_path/moonraker/components/helix_print.py"
+    target="$components_dir/helix_print.py"
 
     if [ -L "$target" ]; then
         rm "$target"
@@ -336,13 +403,13 @@ auto_uninstall() {
     printf '\n'
 
     # Find Moonraker (auto-detect only)
-    moonraker_path=$(find_moonraker "")
+    components_dir=$(find_moonraker_components "")
 
-    if [ -z "$moonraker_path" ]; then
+    if [ -z "$components_dir" ]; then
         error "Could not auto-detect Moonraker installation."
     fi
 
-    target="$moonraker_path/moonraker/components/helix_print.py"
+    target="$components_dir/helix_print.py"
 
     # Find config directory
     config_dir=$(find_config_dir)
@@ -404,18 +471,16 @@ auto_install() {
     fi
 
     # Find Moonraker (auto-detect only)
-    moonraker_path=$(find_moonraker "")
+    components_dir=$(find_moonraker_components "")
 
-    if [ -z "$moonraker_path" ]; then
+    if [ -z "$components_dir" ]; then
         error "Could not auto-detect Moonraker installation."
     fi
-
-    components_dir="$moonraker_path/moonraker/components"
 
     # Find config directory
     config_dir=$(find_config_dir)
 
-    info "Moonraker: $moonraker_path"
+    info "Moonraker components: $components_dir"
     info "Config: ${config_dir:-not found}"
     if [ "$ENABLE_PHASE_TRACKING" = "true" ]; then
         info "Phase tracking: ENABLED"

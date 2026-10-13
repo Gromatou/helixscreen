@@ -18,6 +18,7 @@
 #include <atomic>
 #include <functional>
 #include <string>
+#include <vector>
 
 // Forward declaration
 class IMoonrakerAPI;
@@ -222,5 +223,11 @@ class HelixPluginInstaller {
         "https://raw.githubusercontent.com/prestonbrown/helixscreen/main/moonraker-plugin/"
         "remote-install.sh";
 };
+
+/**
+ * @brief Split install.sh output into log lines: color escapes removed,
+ *        blank lines dropped.
+ */
+std::vector<std::string> script_output_lines(const std::string& output);
 
 } // namespace helix

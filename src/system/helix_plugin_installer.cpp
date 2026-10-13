@@ -10,12 +10,15 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
+#include <cstring>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -87,9 +90,51 @@ std::string extract_host_from_websocket_url(const std::string& url) {
 struct WaitResult {
     bool timed_out = false;
     bool error = false;
+    bool spawn_failed = false;
     int exit_code = -1;
     std::string error_message;
+    std::string output;
 };
+
+// install.sh prints a handful of lines; anything past this is noise.
+constexpr size_t MAX_SCRIPT_OUTPUT_BYTES = 16 * 1024;
+
+/**
+ * @brief Append whatever the child has written so far; fd is non-blocking.
+ */
+static void drain_output(int fd, std::string& out) {
+    char buf[512];
+    while (true) {
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n > 0) {
+            if (out.size() < MAX_SCRIPT_OUTPUT_BYTES) {
+                out.append(buf,
+                           std::min(static_cast<size_t>(n), MAX_SCRIPT_OUTPUT_BYTES - out.size()));
+            }
+            continue;
+        }
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        return;
+    }
+}
+
+/**
+ * @brief Log install.sh's output line by line.
+ *
+ * The script's own messages are the only record of why it failed, so a
+ * failure logs them at warn; a success keeps them at debug.
+ */
+static void log_script_output(const std::string& output, bool succeeded) {
+    for (const auto& line : script_output_lines(output)) {
+        if (succeeded) {
+            spdlog::debug("[PluginInstaller] install.sh: {}", line);
+        } else {
+            spdlog::warn("[PluginInstaller] install.sh: {}", line);
+        }
+    }
+}
 
 /**
  * @brief Wait for child process with timeout, handling EINTR
@@ -100,10 +145,12 @@ struct WaitResult {
  * @param pid Child process ID to wait for
  * @param timeout_seconds Maximum time to wait
  * @param operation_name Name for logging ("Installation" or "Uninstallation")
- * @return WaitResult with exit code or error info
+ * @param out_fd Non-blocking read end of the child's stdout/stderr, drained
+ *               while waiting so a full pipe can never stall the child
+ * @return WaitResult with exit code, captured output, or error info
  */
 static WaitResult wait_for_child_with_timeout(pid_t pid, int timeout_seconds,
-                                              const char* operation_name) {
+                                              const char* operation_name, int out_fd) {
     constexpr int POLL_INTERVAL_MS = 100;
     WaitResult result;
 
@@ -111,10 +158,12 @@ static WaitResult wait_for_child_with_timeout(pid_t pid, int timeout_seconds,
     auto start_time = std::chrono::steady_clock::now();
 
     while (true) {
+        drain_output(out_fd, result.output);
         pid_t wait_result = waitpid(pid, &status, WNOHANG);
 
         if (wait_result == pid) {
             // Child exited
+            drain_output(out_fd, result.output);
             result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
             return result;
         }
@@ -151,6 +200,87 @@ static WaitResult wait_for_child_with_timeout(pid_t pid, int timeout_seconds,
         // Sleep before next poll
         std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
     }
+}
+
+/**
+ * @brief Run install.sh in the given mode, capturing and logging its output.
+ *
+ * fork/exec instead of popen(): sh receives the script as a path argument,
+ * not a command string, so nothing inside script_path is interpreted.
+ * Running it through /bin/sh also works when the file has no exec bit:
+ * Moonraker's type:web self-update extracts the release zip with Python's
+ * zipfile, which does not restore unix modes.
+ */
+static WaitResult run_install_script(const std::string& script_path, const char* mode_flag,
+                                     const char* extra_flag, int timeout_seconds,
+                                     const char* operation_name) {
+    WaitResult result;
+    int fds[2];
+    if (pipe(fds) != 0) {
+        result.error = result.spawn_failed = true;
+        result.error_message = strerror(errno);
+        spdlog::error("[PluginInstaller] pipe failed: {}", result.error_message);
+        return result;
+    }
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        result.error = result.spawn_failed = true;
+        result.error_message = strerror(errno);
+        spdlog::error("[PluginInstaller] Fork failed: {}", result.error_message);
+        close(fds[0]);
+        close(fds[1]);
+        return result;
+    }
+
+    if (pid == 0) {
+        dup2(fds[1], STDOUT_FILENO);
+        dup2(fds[1], STDERR_FILENO);
+        close(fds[0]);
+        close(fds[1]);
+        // A null extra_flag ends the argument list early.
+        execl("/bin/sh", "sh", script_path.c_str(), mode_flag, extra_flag, nullptr);
+        _exit(127);
+    }
+
+    close(fds[1]);
+    result = wait_for_child_with_timeout(pid, timeout_seconds, operation_name, fds[0]);
+    close(fds[0]);
+    log_script_output(result.output, !result.timed_out && !result.error && result.exit_code == 0);
+    return result;
+}
+
+std::vector<std::string> script_output_lines(const std::string& output) {
+    std::vector<std::string> lines;
+    std::string line;
+    auto flush = [&] {
+        if (line.find_first_not_of(" \t\r") != std::string::npos) {
+            lines.push_back(line);
+        }
+        line.clear();
+    };
+    for (size_t i = 0; i < output.size(); ++i) {
+        const char c = output[i];
+        if (c == '\033') {
+            // A CSI sequence: ESC [ parameters, then a final byte in @..~
+            if (i + 1 < output.size() && output[i + 1] == '[') {
+                i += 2;
+                while (i < output.size() && (output[i] < '@' || output[i] > '~')) {
+                    ++i;
+                }
+            }
+            continue;
+        }
+        if (c == '\n') {
+            flush();
+        } else {
+            line.push_back(c);
+        }
+    }
+    flush();
+    return lines;
 }
 
 // ============================================================================
@@ -201,31 +331,16 @@ HelixPluginInstaller::install_local_sync(bool enable_phase_tracking) {
     spdlog::info("[PluginInstaller] Starting local installation: {} --auto (phase_tracking={})",
                  script_path, enable_phase_tracking);
 
-    // fork/exec instead of popen(): sh receives the script as a path argument,
-    // not a command string, so nothing inside script_path is interpreted.
-    // Running it through /bin/sh also works when the file has no exec bit:
-    // Moonraker's type:web self-update extracts the release zip with Python's
-    // zipfile, which does not restore unix modes.
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        state_.store(PluginInstallState::FAILED);
-        std::string err_msg = strerror(errno);
-        spdlog::error("[PluginInstaller] Fork failed: {}", err_msg);
-        return {false, lv_tr("Failed to start installer: ") + err_msg};
-    }
-
-    if (pid == 0) {
-        if (enable_phase_tracking) {
-            execl("/bin/sh", "sh", script_path.c_str(), "--auto", "--with-phase-tracking", nullptr);
-        } else {
-            execl("/bin/sh", "sh", script_path.c_str(), "--auto", nullptr);
-        }
-        _exit(127);
-    }
-
     constexpr int INSTALL_TIMEOUT_SECONDS = 60;
-    WaitResult result = wait_for_child_with_timeout(pid, INSTALL_TIMEOUT_SECONDS, "Installation");
+    WaitResult result =
+        run_install_script(script_path, "--auto",
+                           enable_phase_tracking ? "--with-phase-tracking" : nullptr,
+                           INSTALL_TIMEOUT_SECONDS, "Installation");
+
+    if (result.spawn_failed) {
+        state_.store(PluginInstallState::FAILED);
+        return {false, lv_tr("Failed to start installer: ") + result.error_message};
+    }
 
     if (result.timed_out) {
         state_.store(PluginInstallState::FAILED);
@@ -273,41 +388,20 @@ void HelixPluginInstaller::install_local(InstallCallback callback, bool enable_p
     spdlog::info("[PluginInstaller] Starting local installation: {} --auto (phase_tracking={})",
                  script_path, enable_phase_tracking);
 
-    // fork/exec instead of popen(): sh receives the script as a path argument,
-    // not a command string, so nothing inside script_path is interpreted.
-    // Running it through /bin/sh also works when the file has no exec bit:
-    // Moonraker's type:web self-update extracts the release zip with Python's
-    // zipfile, which does not restore unix modes.
     // NOTE: This is a blocking call. For production UI, consider std::async.
+    constexpr int INSTALL_TIMEOUT_SECONDS = 60;
+    WaitResult result =
+        run_install_script(script_path, "--auto",
+                           enable_phase_tracking ? "--with-phase-tracking" : nullptr,
+                           INSTALL_TIMEOUT_SECONDS, "Installation");
 
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        // Fork failed
+    if (result.spawn_failed) {
         state_.store(PluginInstallState::FAILED);
-        std::string err_msg = strerror(errno);
-        spdlog::error("[PluginInstaller] Fork failed: {}", err_msg);
         if (callback) {
-            callback(false, lv_tr("Failed to start installer: ") + err_msg);
+            callback(false, lv_tr("Failed to start installer: ") + result.error_message);
         }
         return;
     }
-
-    if (pid == 0) {
-        // Child process - execute the script
-        if (enable_phase_tracking) {
-            execl("/bin/sh", "sh", script_path.c_str(), "--auto", "--with-phase-tracking", nullptr);
-        } else {
-            execl("/bin/sh", "sh", script_path.c_str(), "--auto", nullptr);
-        }
-
-        // If execl returns, it failed
-        _exit(127);
-    }
-
-    // Parent process - wait for child with timeout
-    constexpr int INSTALL_TIMEOUT_SECONDS = 60;
-    WaitResult result = wait_for_child_with_timeout(pid, INSTALL_TIMEOUT_SECONDS, "Installation");
 
     if (result.timed_out) {
         state_.store(PluginInstallState::FAILED);
@@ -361,32 +455,17 @@ void HelixPluginInstaller::uninstall_local(InstallCallback callback) {
     spdlog::info("[PluginInstaller] Starting local uninstallation: {} --uninstall-auto",
                  script_path);
 
-    // fork/exec instead of popen(): sh receives the script as a path argument,
-    // not a command string, so nothing inside script_path is interpreted.
-    // Running it through /bin/sh also works when the file has no exec bit:
-    // Moonraker's type:web self-update extracts the release zip with Python's
-    // zipfile, which does not restore unix modes.
-    pid_t pid = fork();
+    constexpr int UNINSTALL_TIMEOUT_SECONDS = 60;
+    WaitResult result = run_install_script(script_path, "--uninstall-auto", nullptr,
+                                           UNINSTALL_TIMEOUT_SECONDS, "Uninstallation");
 
-    if (pid < 0) {
+    if (result.spawn_failed) {
         state_.store(PluginInstallState::FAILED);
-        std::string err_msg = strerror(errno);
-        spdlog::error("[PluginInstaller] Fork failed: {}", err_msg);
         if (callback) {
-            callback(false, lv_tr("Failed to start uninstaller: ") + err_msg);
+            callback(false, lv_tr("Failed to start uninstaller: ") + result.error_message);
         }
         return;
     }
-
-    if (pid == 0) {
-        execl("/bin/sh", "sh", script_path.c_str(), "--uninstall-auto", nullptr);
-        _exit(127);
-    }
-
-    // Parent process - wait for child with timeout
-    constexpr int UNINSTALL_TIMEOUT_SECONDS = 60;
-    WaitResult result =
-        wait_for_child_with_timeout(pid, UNINSTALL_TIMEOUT_SECONDS, "Uninstallation");
 
     if (result.timed_out) {
         state_.store(PluginInstallState::FAILED);
