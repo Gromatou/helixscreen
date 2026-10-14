@@ -381,6 +381,7 @@ class EmergencyStopOverlay {
     static void emergency_stop_clicked(lv_event_t* e);
     static void estop_dialog_cancel_clicked(lv_event_t* e);
     static void estop_dialog_confirm_clicked(lv_event_t* e);
+    static void confirmation_dialog_deleted(lv_event_t* e);
     static void recovery_restart_klipper_clicked(lv_event_t* e);
     static void recovery_firmware_restart_clicked(lv_event_t* e);
     static void recovery_dismiss_clicked(lv_event_t* e);

@@ -409,11 +409,22 @@ void EmergencyStopOverlay::update_visibility() {
 void EmergencyStopOverlay::handle_click() {
     spdlog::info("[EmergencyStop] Button clicked");
 
-    if (require_confirmation_) {
-        show_confirmation_dialog();
-    } else {
+    if (!require_confirmation_) {
         execute_emergency_stop();
+        return;
     }
+
+    // A confirmation is already pending: a second press on the E-Stop button
+    // itself confirms, so stopping never depends on hitting the dialog's small
+    // STOP button while the machine is misbehaving.
+    if (confirmation_dialog_) {
+        spdlog::info("[EmergencyStop] Second press on E-Stop - confirming");
+        dismiss_confirmation_dialog();
+        execute_emergency_stop();
+        return;
+    }
+
+    show_confirmation_dialog();
 }
 
 void EmergencyStopOverlay::execute_emergency_stop() {
@@ -471,6 +482,13 @@ void EmergencyStopOverlay::show_confirmation_dialog() {
         execute_emergency_stop();
         return;
     }
+
+    // The bare modal factory has no owner, so a backdrop/ESC close reports
+    // nothing back here. Clear the handle when the dialog is actually freed, or
+    // it stays stale and every later press returns early on the guard in
+    // show_confirmation_dialog() - leaving the E-Stop dead until app restart.
+    lv_obj_add_event_cb(confirmation_dialog_, &EmergencyStopOverlay::confirmation_dialog_deleted,
+                        LV_EVENT_DELETE, nullptr);
 
     spdlog::info("[EmergencyStop] Confirmation dialog shown");
 }
@@ -900,6 +918,15 @@ void EmergencyStopOverlay::estop_dialog_confirm_clicked(lv_event_t* e) {
     auto& instance = EmergencyStopOverlay::instance();
     instance.dismiss_confirmation_dialog();
     instance.execute_emergency_stop();
+}
+
+void EmergencyStopOverlay::confirmation_dialog_deleted(lv_event_t* e) {
+    auto& instance = EmergencyStopOverlay::instance();
+    lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    if (instance.confirmation_dialog_ == obj) {
+        instance.confirmation_dialog_ = nullptr;
+        spdlog::debug("[EmergencyStop] Confirmation dialog freed - handle cleared");
+    }
 }
 
 void EmergencyStopOverlay::recovery_restart_klipper_clicked(lv_event_t* e) {
